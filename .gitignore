@@ -1,29 +1,21 @@
-# ── Dependencies ──────────────────────────────────────────────────────────────
+# Dependencies
 node_modules/
 
-# ── Local SQLite database (regenerated from seed data on first run) ───────────
+# Database (contains live data - don't commit)
 carpark.db
 
-# ── Sensitive environment variables (set via Vercel dashboard in production) ──
+# Environment variables (contains secrets)
 config.env
+.env
 
-# ── Temp / test cookie files ─────────────────────────────────────────────────
+# Cookies / test files
 cookies.txt
 cookies2.txt
+cookies_new.txt
 final_cookies.txt
 staff_cookies.txt
 test_cookies.txt
+
+# Misc
 nul
-
-# ── OS-generated files ────────────────────────────────────────────────────────
-.DS_Store
-Thumbs.db
-
-# ── npm debug logs ────────────────────────────────────────────────────────────
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# ── Editor directories ────────────────────────────────────────────────────────
-.vscode/
-.idea/
+*.log

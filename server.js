@@ -1,57 +1,34 @@
 require('dotenv').config({ path: './config.env' });
-
-const express    = require('express');
-const session    = require('express-session');
-const path       = require('path');
+const express = require('express');
+const session = require('express-session');
+const path = require('path');
+const cron = require('node-cron');
 const MemoryStore = require('memorystore')(session);
 
 const { db, initializeDatabase } = require('./src/database');
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Express app setup
-// ─────────────────────────────────────────────────────────────────────────────
 const app = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Session middleware (pure-JS memory store – works on Vercel serverless)
+// Sessions (in-memory store – pure JS, no native deps)
 app.use(session({
-  store: new MemoryStore({ checkPeriod: 86400000 }),
+  store: new MemoryStore({ checkPeriod: 86400000 }), // prune expired sessions every 24h
   secret: process.env.SESSION_SECRET || 'carpark_secret_2026',
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
+    secure: false,
     httpOnly: true,
-    maxAge: 8 * 60 * 60 * 1000   // 8 hours
+    maxAge: 8 * 60 * 60 * 1000 // 8 hours
   }
 }));
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DB initialisation guard – await once, then let every request through
-// This is critical for Vercel: the DB must be ready before routes run.
-// ─────────────────────────────────────────────────────────────────────────────
-const dbReady = initializeDatabase();
-
-app.use(async (req, res, next) => {
-  try {
-    await dbReady;
-    next();
-  } catch (err) {
-    console.error('DB init error:', err);
-    res.status(500).json({ error: 'Database initialization failed' });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Static files
-// ─────────────────────────────────────────────────────────────────────────────
+// Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ─────────────────────────────────────────────────────────────────────────────
 // API Routes
-// ─────────────────────────────────────────────────────────────────────────────
 app.use('/api/auth',      require('./src/routes/auth'));
 app.use('/api/dashboard', require('./src/routes/dashboard'));
 app.use('/api/invoices',  require('./src/routes/invoices'));
@@ -74,130 +51,109 @@ app.get('/', (req, res) => {
   res.redirect('/login.html');
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Scheduled job: send account emails on the 20th of each month at 8 AM
-// Only runs in a persistent Node.js server process (not on Vercel serverless)
-// ─────────────────────────────────────────────────────────────────────────────
-if (!process.env.VERCEL) {
-  const cron = require('node-cron');
-  cron.schedule('0 8 20 * *', async () => {
-    console.log('Running scheduled monthly account email job...');
-    try {
-      const nodemailer = require('nodemailer');
+// ─── Scheduled job: send account emails on the 20th of each month at 8 AM ───
+cron.schedule('0 8 20 * *', async () => {
+  console.log('Running scheduled monthly account email job...');
+  try {
+    const nodemailer = require('nodemailer');
 
-      const now    = new Date();
-      const month  = now.getMonth() + 1;
-      const year   = now.getFullYear();
-      const m      = String(month).padStart(2, '0');
-      const startDate = `${year}-${m}-01`;
-      const endDate   = new Date(year, month, 0).toISOString().split('T')[0];
-      const monthNames = ['January','February','March','April','May','June',
-                          'July','August','September','October','November','December'];
-      const monthName  = monthNames[month - 1];
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const year  = now.getFullYear();
+    const m     = String(month).padStart(2, '0');
+    const startDate = `${year}-${m}-01`;
+    const endDate   = new Date(year, month, 0).toISOString().split('T')[0];
+    const monthNames = ['January','February','March','April','May','June',
+                        'July','August','September','October','November','December'];
+    const monthName = monthNames[month - 1];
 
-      const carparks = db.prepare('SELECT * FROM carparks').all();
+    const carparks = db.prepare('SELECT * FROM carparks').all();
 
-      for (const carpark of carparks) {
-        const accounts = db.prepare(
-          'SELECT * FROM account_customers WHERE carpark_id = ? AND active = 1'
-        ).all(carpark.id);
+    for (const carpark of carparks) {
+      const accounts = db.prepare('SELECT * FROM account_customers WHERE carpark_id = ? AND active = 1').all(carpark.id);
 
-        const transporter = nodemailer.createTransport({
-          host:   process.env.SMTP_HOST   || 'smtp.gmail.com',
-          port:   parseInt(process.env.SMTP_PORT || '587'),
-          secure: process.env.SMTP_SECURE === 'true',
-          auth:   { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-        });
+      const transporter = nodemailer.createTransport({
+        host:   process.env.SMTP_HOST   || 'smtp.gmail.com',
+        port:   parseInt(process.env.SMTP_PORT || '587'),
+        secure: process.env.SMTP_SECURE === 'true',
+        auth:   { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+      });
 
-        for (const account of accounts) {
-          const invoices = db.prepare(`
-            SELECT * FROM invoices WHERE account_customer_id = ? AND void = 0
-            AND DATE(date_in) >= ? AND DATE(date_in) <= ?
-            ORDER BY date_in ASC
-          `).all(account.id, startDate, endDate);
+      for (const account of accounts) {
+        const invoices = db.prepare(`
+          SELECT * FROM invoices WHERE account_customer_id = ? AND void = 0
+          AND DATE(date_in) >= ? AND DATE(date_in) <= ?
+          ORDER BY date_in ASC
+        `).all(account.id, startDate, endDate);
 
-          if (invoices.length === 0) continue;
+        if (invoices.length === 0) continue;
 
-          const emailTo = account.billing_email || account.email;
-          if (!emailTo) continue;
+        const emailTo = account.billing_email || account.email;
+        if (!emailTo) continue;
 
-          const total = invoices.reduce((s, inv) => s + (inv.payment_amount || 0), 0);
-          const rows  = invoices.map(inv => {
-            const dIn  = inv.date_in     ? new Date(inv.date_in).toLocaleDateString('en-NZ',     { day:'numeric', month:'short', year:'2-digit' }) : '';
-            const dOut = inv.return_date ? new Date(inv.return_date).toLocaleDateString('en-NZ', { day:'numeric', month:'short', year:'2-digit' }) : '';
-            return `<tr>
-              <td>${dIn} - ${dOut}</td>
-              <td>${inv.first_name||''} ${inv.last_name||''}</td>
-              <td>${inv.rego||''}</td>
-              <td>$${parseFloat(inv.payment_amount||0).toFixed(2)}</td>
-            </tr>`;
-          }).join('');
+        const total = invoices.reduce((s, inv) => s + (inv.payment_amount || 0), 0);
+        const rows  = invoices.map(inv => {
+          const dIn  = inv.date_in     ? new Date(inv.date_in).toLocaleDateString('en-NZ',     { day:'numeric', month:'short', year:'2-digit' }) : '';
+          const dOut = inv.return_date ? new Date(inv.return_date).toLocaleDateString('en-NZ', { day:'numeric', month:'short', year:'2-digit' }) : '';
+          return `<tr><td>${dIn} - ${dOut}</td><td>${inv.first_name||''} ${inv.last_name||''}</td><td>${inv.rego||''}</td><td>$${parseFloat(inv.payment_amount||0).toFixed(2)}</td></tr>`;
+        }).join('');
 
-          const paymentLink = account.payment_link
-            ? `<p><a href="${account.payment_link}" style="background:#27ae60;color:#fff;padding:10px 20px;border-radius:5px;text-decoration:none;">Pay Online</a></p>`
-            : '';
+        const paymentLink = account.payment_link
+          ? `<p><a href="${account.payment_link}" style="background:#27ae60;color:#fff;padding:10px 20px;border-radius:5px;text-decoration:none;">Pay Online</a></p>`
+          : '';
 
-          const html = `<!DOCTYPE html><html><body style="font-family:Arial;max-width:700px;margin:0 auto;padding:20px;">
-            <h2 style="color:#2c3e50;font-style:italic;">${carpark.name} - ${monthName} ${year} Accounts</h2><hr>
-            <h3 style="color:#e74c3c;">${account.company_name}</h3>
-            <table border="1" cellpadding="8" cellspacing="0" width="100%">
-              <tr><th>Stay</th><th>Name</th><th>Car Rego</th><th>Cost</th></tr>
-              ${rows}
-            </table>
-            <p><strong>Total: <span style="color:#27ae60;">$${parseFloat(total).toFixed(2)}</span></strong></p>
-            ${paymentLink}
-          </body></html>`;
+        const html = `<!DOCTYPE html><html><body style="font-family:Arial;max-width:700px;margin:0 auto;padding:20px;">
+          <h2 style="color:#2c3e50;font-style:italic;">${carpark.name} - ${monthName} ${year} Accounts</h2><hr>
+          <h3 style="color:#e74c3c;">${account.company_name}</h3>
+          <table border="1" cellpadding="8" cellspacing="0" width="100%">
+            <tr><th>Stay</th><th>Name</th><th>Car Rego</th><th>Cost</th></tr>${rows}
+          </table>
+          <p><strong>Total: <span style="color:#27ae60;">$${parseFloat(total).toFixed(2)}</span></strong></p>
+          ${paymentLink}
+        </body></html>`;
 
-          try {
-            await transporter.sendMail({
-              from:    process.env.EMAIL_FROM || carpark.email,
-              to:      emailTo,
-              subject: `${carpark.name} - ${monthName} ${year} Account Statement`,
-              html
-            });
-            db.prepare(`INSERT INTO email_logs
-              (carpark_id, account_customer_id, account_name, month, year, sent_at, status, recipient_email)
-              VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`)
-              .run(carpark.id, account.id, account.company_name, month, year, 'sent', emailTo);
-            console.log(`Sent account email to ${emailTo}`);
-          } catch (err) {
-            console.error(`Failed to send to ${emailTo}:`, err.message);
-            db.prepare(`INSERT INTO email_logs
-              (carpark_id, account_customer_id, account_name, month, year, status, error_msg, recipient_email)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-              .run(carpark.id, account.id, account.company_name, month, year, 'failed', err.message, emailTo);
-          }
+        try {
+          await transporter.sendMail({
+            from: process.env.EMAIL_FROM || carpark.email,
+            to:   emailTo,
+            subject: `${carpark.name} - ${monthName} ${year} Account Statement`,
+            html
+          });
+          db.prepare(`INSERT INTO email_logs
+            (carpark_id, account_customer_id, account_name, month, year, sent_at, status, recipient_email)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`)
+            .run(carpark.id, account.id, account.company_name, month, year, 'sent', emailTo);
+          console.log(`Sent account email to ${emailTo}`);
+        } catch (err) {
+          console.error(`Failed to send to ${emailTo}:`, err.message);
+          db.prepare(`INSERT INTO email_logs
+            (carpark_id, account_customer_id, account_name, month, year, status, error_msg, recipient_email)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+            .run(carpark.id, account.id, account.company_name, month, year, 'failed', err.message, emailTo);
         }
       }
-      console.log('Monthly account emails completed.');
-    } catch (err) {
-      console.error('Cron job error:', err);
     }
-  });
-}
+    console.log('Monthly account emails completed.');
+  } catch (err) {
+    console.error('Cron job error:', err);
+  }
+});
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Export app for Vercel (module.exports must be the Express app)
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Start server after DB is ready ──────────────────────────────────────────
+const PORT = process.env.PORT || 3000;
+
+initializeDatabase().then(() => {
+  app.listen(PORT, () => {
+    console.log(`\n================================================`);
+    console.log(`  BOI Car Storage - Carpark Management System`);
+    console.log(`  Running at: http://localhost:${PORT}`);
+    console.log(`  Default login: admin / admin123`);
+    console.log(`  Staff login:   staff / staff123`);
+    console.log(`================================================\n`);
+  });
+}).catch(err => {
+  console.error('Failed to initialise database:', err);
+  process.exit(1);
+});
+
 module.exports = app;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Start HTTP server when run directly (local development)
-// On Vercel this block is never executed.
-// ─────────────────────────────────────────────────────────────────────────────
-if (require.main === module) {
-  const PORT = process.env.PORT || 3000;
-  dbReady.then(() => {
-    app.listen(PORT, () => {
-      console.log(`\n================================================`);
-      console.log(`  BOI Car Storage - Carpark Management System`);
-      console.log(`  Running at: http://localhost:${PORT}`);
-      console.log(`  Default login: admin / admin123`);
-      console.log(`  Staff login:   staff / staff123`);
-      console.log(`================================================\n`);
-    });
-  }).catch(err => {
-    console.error('Failed to initialise database:', err);
-    process.exit(1);
-  });
-}
