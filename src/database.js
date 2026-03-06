@@ -2,7 +2,11 @@ const bcrypt = require('bcryptjs');
 const path = require('path');
 const fs = require('fs');
 
-const DB_PATH = path.join(__dirname, '..', 'carpark.db');
+// On Vercel the project root is read-only; /tmp is the only writable directory.
+// Locally we keep the DB next to the project root so it persists between restarts.
+const DB_PATH = process.env.VERCEL
+  ? '/tmp/carpark.db'
+  : path.join(__dirname, '..', 'carpark.db');
 
 // ── sql.js wrapper providing a synchronous better-sqlite3-like API ──
 // sql.js initialises via WASM (async), so we wait for it once at startup.
@@ -131,10 +135,13 @@ const db = new Proxy({}, {
 // initializeDatabase – MUST be awaited before the server starts taking requests
 // ─────────────────────────────────────────────────────────────────────────────
 async function initializeDatabase() {
-  // Load sql.js WASM asynchronously (one-time cost)
+  // Load sql.js WASM asynchronously (one-time cost).
+  // Use the WASM bundled inside the sql.js npm package so it works everywhere
+  // (local dev, Vercel serverless, Docker) without fetching from a CDN.
   if (!_SQL) {
     const initSqlJs = require('sql.js');
-    _SQL = await initSqlJs();
+    const wasmDir = path.dirname(require.resolve('sql.js/dist/sql-wasm.js'));
+    _SQL = await initSqlJs({ locateFile: f => path.join(wasmDir, f) });
   }
 
   // Restore from file or create fresh

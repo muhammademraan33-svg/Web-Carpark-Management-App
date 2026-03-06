@@ -9,6 +9,23 @@ const { db, initializeDatabase } = require('./src/database');
 
 const app = express();
 
+// ─── Lazy DB initialisation ──────────────────────────────────────────────────
+// On Vercel, module.exports is consumed before initializeDatabase() resolves,
+// so we gate every request behind a single shared init promise.
+let _dbInitPromise = null;
+app.use((req, res, next) => {
+  if (!_dbInitPromise) {
+    _dbInitPromise = initializeDatabase().catch(err => {
+      console.error('DB init failed:', err);
+      _dbInitPromise = null; // allow retry on next request
+      throw err;
+    });
+  }
+  _dbInitPromise.then(() => next()).catch(() => {
+    res.status(500).json({ error: 'Database initialisation failed. Please try again.' });
+  });
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -139,21 +156,24 @@ cron.schedule('0 8 20 * *', async () => {
   }
 });
 
-// ─── Start server after DB is ready ──────────────────────────────────────────
-const PORT = process.env.PORT || 3000;
-
-initializeDatabase().then(() => {
-  app.listen(PORT, () => {
-    console.log(`\n================================================`);
-    console.log(`  BOI Car Storage - Carpark Management System`);
-    console.log(`  Running at: http://localhost:${PORT}`);
-    console.log(`  Default login: admin / admin123`);
-    console.log(`  Staff login:   staff / staff123`);
-    console.log(`================================================\n`);
+// ─── Local dev: start the HTTP server ────────────────────────────────────────
+// On Vercel this file is imported as a module; app.listen() must NOT be called.
+if (require.main === module) {
+  const PORT = process.env.PORT || 3000;
+  initializeDatabase().then(() => {
+    app.listen(PORT, () => {
+      console.log(`\n================================================`);
+      console.log(`  BOI Car Storage - Carpark Management System`);
+      console.log(`  Running at: http://localhost:${PORT}`);
+      console.log(`  Default login: admin / admin123`);
+      console.log(`  Staff login:   staff / staff123`);
+      console.log(`================================================\n`);
+    });
+  }).catch(err => {
+    console.error('Failed to initialise database:', err);
+    process.exit(1);
   });
-}).catch(err => {
-  console.error('Failed to initialise database:', err);
-  process.exit(1);
-});
+}
 
+// Export for Vercel (and tests)
 module.exports = app;
