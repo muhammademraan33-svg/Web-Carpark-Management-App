@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>End of Day - Carpark Management</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="/css/style.css" rel="stylesheet">
+</head>
+<body>
+  <div id="navbar-container"></div>
+
+  <div class="page-container">
+    <div class="page-header">
+      <h2><i class="bi bi-calendar-check-fill me-2"></i>End of Day</h2>
+      <div class="d-flex align-items-center gap-3">
+        <input type="date" class="form-control" id="endday-date" style="width:160px;">
+        <button class="btn btn-primary" id="btn-load-endday"><i class="bi bi-arrow-clockwise me-1"></i>Load</button>
+      </div>
+    </div>
+
+    <div class="row g-3 mb-4">
+      <div class="col-md-3 col-6">
+        <div class="stat-card success">
+          <div class="stat-value" id="ed-revenue">$0</div>
+          <div class="stat-label"><i class="bi bi-cash me-1"></i>Total Revenue</div>
+        </div>
+      </div>
+      <div class="col-md-3 col-6">
+        <div class="stat-card info">
+          <div class="stat-value" id="ed-cars-in">0</div>
+          <div class="stat-label"><i class="bi bi-car-front me-1"></i>Cars Checked In</div>
+        </div>
+      </div>
+      <div class="col-md-3 col-6">
+        <div class="stat-card warning">
+          <div class="stat-value" id="ed-cars-in-yard">0</div>
+          <div class="stat-label"><i class="bi bi-p-square me-1"></i>Cars in Yard</div>
+        </div>
+      </div>
+      <div class="col-md-3 col-6">
+        <div class="stat-card">
+          <div class="stat-value" id="ed-cars-out">0</div>
+          <div class="stat-label"><i class="bi bi-box-arrow-right me-1"></i>Cars Out</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Payment Breakdown -->
+    <div class="row g-3 mb-4">
+      <div class="col-md-4">
+        <div class="form-card">
+          <div class="form-section-title">Payment Breakdown</div>
+          <table class="table table-sm">
+            <tbody>
+              <tr><td>Eftpos</td><td class="fw-bold text-success text-end" id="ed-eftpos">$0</td></tr>
+              <tr><td>Cash</td><td class="fw-bold text-primary text-end" id="ed-cash">$0</td></tr>
+              <tr><td>On Account</td><td class="fw-bold text-danger text-end" id="ed-account">$0</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="col-md-8">
+        <div class="form-card">
+          <div class="form-section-title">End of Day Notes</div>
+          <textarea class="form-control" id="ed-notes" rows="3" placeholder="Any notes for end of day..."></textarea>
+          <button class="btn btn-success mt-3" id="btn-save-endday">
+            <i class="bi bi-floppy me-2"></i>Save End of Day Record
+          </button>
+          <div id="ed-saved-status" class="d-inline-block ms-2"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Today's Invoices -->
+    <div class="form-card mb-3">
+      <div class="form-section-title"><i class="bi bi-receipt me-2"></i>Today's Invoices</div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover">
+          <thead>
+            <tr><th>Inv#</th><th>Name</th><th>Rego</th><th>Time In</th><th>Return</th><th>Total</th><th>Status</th><th>Staff</th></tr>
+          </thead>
+          <tbody id="ed-invoices-tbody">
+            <tr><td colspan="8" class="text-center text-muted"><div class="spinner-border spinner-border-sm"></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Historical Records -->
+    <div class="form-card">
+      <div class="form-section-title"><i class="bi bi-clock-history me-2"></i>Recent End of Day History</div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover">
+          <thead>
+            <tr><th>Date</th><th>Revenue</th><th>Cars In</th><th>Cars Yard</th><th>Eftpos</th><th>Cash</th><th>Account</th><th>Notes</th></tr>
+          </thead>
+          <tbody id="ed-history-tbody">
+            <tr><td colspan="8" class="text-center text-muted"><div class="spinner-border spinner-border-sm"></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="alert-container" class="alert-banner"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/js/common.js"></script>
+  <script>
+    document.getElementById('navbar-container').innerHTML = renderNavbar('endday');
+
+    const dateInput = document.getElementById('endday-date');
+    dateInput.value = today();
+
+    async function loadEndDay() {
+      const date = dateInput.value;
+      const res = await fetch(`/api/endday?date=${date}`);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      const s = data.stats;
+      document.getElementById('ed-revenue').textContent = formatCurrency(s.total_revenue);
+      document.getElementById('ed-cars-in').textContent = s.cars_in || 0;
+      document.getElementById('ed-cars-in-yard').textContent = s.cars_in_yard || 0;
+      document.getElementById('ed-cars-out').textContent = s.cars_out || 0;
+      document.getElementById('ed-eftpos').textContent = formatCurrency(s.eftpos);
+      document.getElementById('ed-cash').textContent = formatCurrency(s.cash);
+      document.getElementById('ed-account').textContent = formatCurrency(s.on_account);
+
+      if (data.record && data.record.notes) {
+        document.getElementById('ed-notes').value = data.record.notes;
+      }
+
+      // Today's invoices
+      document.getElementById('ed-invoices-tbody').innerHTML = data.invoices.map(inv => `
+        <tr class="${rowClass(inv.paid_status)}">
+          <td><a href="/invoice.html?id=${inv.id}">#${inv.invoice_number}</a></td>
+          <td>${inv.first_name||''} ${inv.last_name||''}</td>
+          <td class="fw-bold">${inv.rego||''}</td>
+          <td>${inv.time_in||''}</td>
+          <td>${inv.return_date ? formatDateShort(inv.return_date) : ''}</td>
+          <td class="fw-bold">${formatCurrency(inv.total_price)}</td>
+          <td>${statusBadge(inv.paid_status)}</td>
+          <td class="small">${inv.staff_name||''}</td>
+        </tr>
+      `).join('') || '<tr><td colspan="8" class="text-center text-muted">No invoices today</td></tr>';
+
+      // Saved status
+      if (data.record) {
+        document.getElementById('ed-saved-status').innerHTML = '<span class="badge bg-success">Record saved</span>';
+      } else {
+        document.getElementById('ed-saved-status').innerHTML = '<span class="badge bg-warning text-dark">Not saved yet</span>';
+      }
+    }
+
+    async function loadHistory() {
+      const res = await fetch('/api/endday/history');
+      if (!res.ok) return;
+      const records = await res.json();
+      document.getElementById('ed-history-tbody').innerHTML = records.map(r => `
+        <tr>
+          <td class="fw-bold">${r.date}</td>
+          <td class="text-success fw-bold">${formatCurrency(r.total_revenue)}</td>
+          <td>${r.cars_in||0}</td>
+          <td>${r.cars_in_yard||0}</td>
+          <td>${formatCurrency(r.eftpos_total)}</td>
+          <td>${formatCurrency(r.cash_total)}</td>
+          <td>${formatCurrency(r.account_total)}</td>
+          <td class="small text-muted">${r.notes||''}</td>
+        </tr>
+      `).join('') || '<tr><td colspan="8" class="text-center text-muted">No history yet</td></tr>';
+    }
+
+    document.getElementById('btn-load-endday').addEventListener('click', loadEndDay);
+    dateInput.addEventListener('change', loadEndDay);
+
+    document.getElementById('btn-save-endday').addEventListener('click', async () => {
+      const res = await fetch('/api/endday', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: dateInput.value,
+          notes: document.getElementById('ed-notes').value
+        })
+      });
+      if (res.ok) {
+        showAlert('End of day record saved!', 'success');
+        document.getElementById('ed-saved-status').innerHTML = '<span class="badge bg-success">Record saved</span>';
+        loadHistory();
+      }
+    });
+
+    async function init() {
+      await checkAuth();
+      await loadEndDay();
+      await loadHistory();
+      updateNavCarsCount();
+    }
+    init();
+  </script>
+</body>
+</html>

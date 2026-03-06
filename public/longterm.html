@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Long Term Customers - Carpark Management</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="/css/style.css" rel="stylesheet">
+</head>
+<body>
+  <div id="navbar-container"></div>
+
+  <div class="page-container">
+    <div class="page-header">
+      <h2><i class="bi bi-calendar-week me-2"></i>Long Term Customers</h2>
+      <button class="btn btn-success" id="btn-new-lt">
+        <i class="bi bi-plus-lg me-1"></i>+New
+      </button>
+    </div>
+
+    <!-- Column headers -->
+    <div class="row g-2 mb-2 px-1">
+      <div class="col-6">
+        <div class="d-flex gap-2 small fw-bold text-muted px-2">
+          <div style="min-width:50px;">LT#</div>
+          <div style="flex:1;">Name</div>
+          <div style="min-width:80px;">Rego 1</div>
+          <div style="min-width:80px;">Rego 2</div>
+          <div style="min-width:110px;">Phone</div>
+          <div style="min-width:60px;">Edit</div>
+        </div>
+      </div>
+      <div class="col-6">
+        <div class="d-flex gap-2 small fw-bold text-muted px-2">
+          <div style="min-width:50px;">LT#</div>
+          <div style="flex:1;">Name</div>
+          <div style="min-width:80px;">Rego 1</div>
+          <div style="min-width:80px;">Rego 2</div>
+          <div style="min-width:110px;">Phone</div>
+          <div style="min-width:60px;">Edit</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="lt-grid" class="lt-grid">
+      <div class="text-center py-4 text-muted"><div class="spinner-border"></div></div>
+    </div>
+  </div>
+
+  <!-- LT Edit/Add Modal -->
+  <div class="modal fade" id="ltModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="lt-modal-title">Add Long Term Customer</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="lt-id">
+          <div class="row g-3">
+            <div class="col-md-3">
+              <label class="form-label">LT #</label>
+              <input type="text" class="form-control fw-bold" id="lt-number" placeholder="LT1" readonly>
+            </div>
+            <div class="col-md-9">
+              <label class="form-label">Full Name *</label>
+              <input type="text" class="form-control" id="lt-name" placeholder="Full name" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Rego 1</label>
+              <input type="text" class="form-control text-uppercase" id="lt-rego1" placeholder="GUA500">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Rego 2 (optional)</label>
+              <input type="text" class="form-control text-uppercase" id="lt-rego2" placeholder="EUT929">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Phone</label>
+              <input type="text" class="form-control" id="lt-phone" placeholder="021 000 0000">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Email</label>
+              <input type="email" class="form-control" id="lt-email" placeholder="email@example.com">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Monthly Rate $</label>
+              <input type="number" step="0.01" class="form-control" id="lt-rate" placeholder="120.00">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Rate Period</label>
+              <select class="form-select" id="lt-rate-period">
+                <option value="monthly">Monthly</option>
+                <option value="weekly">Weekly</option>
+                <option value="annual">Annual</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Expiry Date</label>
+              <input type="date" class="form-control" id="lt-expiry">
+            </div>
+            <div class="col-md-8">
+              <label class="form-label">Notes</label>
+              <input type="text" class="form-control" id="lt-notes" placeholder="Notes...">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-danger" id="btn-delete-lt" style="display:none;">Delete</button>
+          <button type="button" class="btn btn-success" id="btn-save-lt">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="alert-container" class="alert-banner"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/js/common.js"></script>
+  <script>
+    document.getElementById('navbar-container').innerHTML = renderNavbar('longterm');
+
+    async function loadLongTerm() {
+      const res = await fetch('/api/longterm');
+      if (!res.ok) return;
+      const customers = await res.json();
+
+      if (customers.length === 0) {
+        document.getElementById('lt-grid').innerHTML = '<div class="col-12 text-center text-muted py-4">No long term customers yet.</div>';
+        return;
+      }
+
+      // Split into two columns
+      const half = Math.ceil(customers.length / 2);
+      const col1 = customers.slice(0, half);
+      const col2 = customers.slice(half);
+
+      function renderCol(items) {
+        return items.map(c => `
+          <div class="lt-card mb-2">
+            <div class="lt-number">${c.lt_number}</div>
+            <div class="lt-name" style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${c.name}">${c.name}</div>
+            ${c.rego_1 ? `<span class="lt-rego">${c.rego_1}</span>` : '<span class="lt-rego text-muted">—</span>'}
+            ${c.rego_2 ? `<span class="lt-rego">${c.rego_2}</span>` : '<span class="lt-rego text-muted" style="opacity:0.3;">—</span>'}
+            <div class="small text-muted" style="min-width:90px;">${c.phone||''}</div>
+            <button class="btn btn-warning btn-action btn-edit-lt" data-id="${c.id}" 
+              data-lt='${JSON.stringify(c).replace(/'/g, "&#39;")}'>
+              Edit
+            </button>
+          </div>
+        `).join('');
+      }
+
+      document.getElementById('lt-grid').innerHTML = `
+        <div>${renderCol(col1)}</div>
+        <div>${renderCol(col2)}</div>
+      `;
+
+      // Attach edit handlers
+      document.querySelectorAll('.btn-edit-lt').forEach(btn => {
+        btn.addEventListener('click', () => {
+          try {
+            const lt = JSON.parse(btn.dataset.lt.replace(/&#39;/g, "'"));
+            openEditModal(lt);
+          } catch(e) {
+            // Try fetching by id
+            openEditById(btn.dataset.id);
+          }
+        });
+      });
+    }
+
+    async function openEditById(id) {
+      const res = await fetch(`/api/longterm/${id}`);
+      if (res.ok) openEditModal(await res.json());
+    }
+
+    function openEditModal(lt) {
+      document.getElementById('lt-id').value = lt.id;
+      document.getElementById('lt-modal-title').textContent = `Edit Long Term - ${lt.lt_number}`;
+      document.getElementById('lt-number').value = lt.lt_number;
+      document.getElementById('lt-name').value = lt.name;
+      document.getElementById('lt-rego1').value = lt.rego_1 || '';
+      document.getElementById('lt-rego2').value = lt.rego_2 || '';
+      document.getElementById('lt-phone').value = lt.phone || '';
+      document.getElementById('lt-email').value = lt.email || '';
+      document.getElementById('lt-rate').value = lt.rate || '';
+      document.getElementById('lt-rate-period').value = lt.rate_period || 'monthly';
+      document.getElementById('lt-expiry').value = lt.expiry_date ? lt.expiry_date.split('T')[0] : '';
+      document.getElementById('lt-notes').value = lt.notes || '';
+      document.getElementById('btn-delete-lt').style.display = 'inline-block';
+      new bootstrap.Modal('#ltModal').show();
+    }
+
+    document.getElementById('btn-new-lt').addEventListener('click', async () => {
+      // Get next LT number
+      const res = await fetch('/api/longterm/next-number');
+      let ltNum = 'LT1';
+      if (res.ok) {
+        const data = await res.json();
+        ltNum = data.ltNumber;
+      }
+
+      document.getElementById('lt-id').value = '';
+      document.getElementById('lt-modal-title').textContent = 'Add Long Term Customer';
+      document.getElementById('lt-number').value = ltNum;
+      document.getElementById('lt-name').value = '';
+      document.getElementById('lt-rego1').value = '';
+      document.getElementById('lt-rego2').value = '';
+      document.getElementById('lt-phone').value = '';
+      document.getElementById('lt-email').value = '';
+      document.getElementById('lt-rate').value = '120.00';
+      document.getElementById('lt-rate-period').value = 'monthly';
+      document.getElementById('lt-expiry').value = '';
+      document.getElementById('lt-notes').value = '';
+      document.getElementById('btn-delete-lt').style.display = 'none';
+      new bootstrap.Modal('#ltModal').show();
+    });
+
+    document.getElementById('btn-save-lt').addEventListener('click', async () => {
+      const id = document.getElementById('lt-id').value;
+      const payload = {
+        lt_number: document.getElementById('lt-number').value,
+        name: document.getElementById('lt-name').value,
+        rego_1: document.getElementById('lt-rego1').value,
+        rego_2: document.getElementById('lt-rego2').value,
+        phone: document.getElementById('lt-phone').value,
+        email: document.getElementById('lt-email').value,
+        rate: document.getElementById('lt-rate').value,
+        rate_period: document.getElementById('lt-rate-period').value,
+        expiry_date: document.getElementById('lt-expiry').value || null,
+        notes: document.getElementById('lt-notes').value
+      };
+
+      if (!payload.name) { showAlert('Name is required', 'danger'); return; }
+
+      let res;
+      if (id) {
+        res = await fetch(`/api/longterm/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      } else {
+        res = await fetch('/api/longterm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      }
+
+      if (res.ok) {
+        showAlert(id ? 'Long term customer updated' : 'Long term customer added', 'success');
+        bootstrap.Modal.getInstance('#ltModal').hide();
+        loadLongTerm();
+      } else {
+        const err = await res.json();
+        showAlert(err.error || 'Error saving', 'danger');
+      }
+    });
+
+    document.getElementById('btn-delete-lt').addEventListener('click', async () => {
+      const id = document.getElementById('lt-id').value;
+      if (!id || !confirm('Remove this long term customer?')) return;
+      const res = await fetch(`/api/longterm/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        showAlert('Long term customer removed', 'warning');
+        bootstrap.Modal.getInstance('#ltModal').hide();
+        loadLongTerm();
+      }
+    });
+
+    async function init() {
+      await checkAuth();
+      await loadLongTerm();
+      updateNavCarsCount();
+    }
+    init();
+  </script>
+</body>
+</html>
