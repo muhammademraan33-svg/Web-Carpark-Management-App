@@ -96,18 +96,21 @@
       document.getElementById('inuse-count').textContent = `${data.inUse} In Use`;
 
       const grid = document.getElementById('key-grid');
-      // Use 'in-use' (hyphen) so it matches the CSS selector and event delegation below
       grid.innerHTML = data.keys.map(k => {
-        const cssClass = k.status === 'in_use' ? 'in-use' : 'available';
-        const safeData = JSON.stringify(k).replace(/'/g, "&#39;");
-        const titleTxt = k.status === 'in_use'
-          ? `Click to open booking — ${k.first_name||''} ${k.last_name||''} (${k.rego||''})`
+        const inUse    = k.status === 'in_use';
+        const cssClass = inUse ? 'in-use' : 'available';
+        // Store invoice_id as its own plain attribute – no JSON parsing needed on click
+        const invIdAttr = inUse && k.invoice_id ? `data-invoice-id="${k.invoice_id}"` : '';
+        const cursorStyle = inUse ? 'cursor:pointer;' : '';
+        const titleTxt = inUse
+          ? `Open booking: ${k.first_name||''} ${k.last_name||''} (${k.rego||''})`
           : 'Available';
-        const nameTxt = k.status === 'in_use'
+        const nameTxt = inUse
           ? `<span class="key-name">${(k.last_name||'').substring(0,8) || 'In Use'}</span>`
           : `<span class="key-name text-muted">Free</span>`;
-        return `<div class="key-item ${cssClass}" data-key='${safeData}' title="${titleTxt}">
-          <span class="key-num">${k.key_number}</span>${nameTxt}
+        return `<div class="key-item ${cssClass}" ${invIdAttr} style="${cursorStyle}" title="${titleTxt}">
+          <span class="key-num" style="pointer-events:none">${k.key_number}</span>
+          <span style="pointer-events:none">${nameTxt}</span>
         </div>`;
       }).join('');
     }
@@ -138,16 +141,15 @@
 
     // ── Event delegation: one listener handles all key clicks, even after grid refresh ──
     document.getElementById('key-grid').addEventListener('click', (e) => {
+      // Walk up to the key-item div (inner spans have pointer-events:none so e.target IS the div)
       const keyEl = e.target.closest('.key-item.in-use');
       if (!keyEl) return;
-      try {
-        const k = JSON.parse(keyEl.dataset.key.replace(/&#39;/g, "'"));
-        if (k.invoice_id) {
-          window.location.href = `/invoice.html?id=${k.invoice_id}`;
-        } else {
-          showKeyDetail(k); // fall-back: key in-use but no linked invoice
-        }
-      } catch (err) { console.error('Key click error:', err); }
+      const invoiceId = keyEl.getAttribute('data-invoice-id');
+      if (invoiceId) {
+        window.location.href = `/invoice.html?id=${invoiceId}`;
+      } else {
+        showAlert('No booking linked to this key yet.', 'warning');
+      }
     });
 
     document.getElementById('btn-release-key').addEventListener('click', async () => {
@@ -171,15 +173,16 @@
       const res = await fetch('/api/keybox/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key_number: num })
+        body: JSON.stringify({ key_number: parseInt(num) })
       });
       if (res.ok) {
         showAlert(`Key #${num} added`, 'success');
         bootstrap.Modal.getInstance('#addKeyModal').hide();
+        document.getElementById('new-key-number').value = '';
         loadKeyBox();
       } else {
         const err = await res.json();
-        showAlert(err.error || 'Error', 'danger');
+        showAlert((err.error || 'Error') + ` — Key #${num} may already exist.`, 'warning');
       }
     });
 
