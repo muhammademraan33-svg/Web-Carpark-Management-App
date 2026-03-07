@@ -4,14 +4,22 @@ const { db } = require('../database');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const router = express.Router();
 
+// Default SMTP settings for deployed environments where env vars may not be set.
+// These fallbacks are safe for the contest demo but should be overridden with
+// environment variables (SMTP_USER, SMTP_PASS, EMAIL_FROM) in production.
+const SMTP_USER = process.env.SMTP_USER || 'videofootage0@gmail.com';
+const SMTP_PASS = process.env.SMTP_PASS || 'rhyb tdsd gpdp kyhg';
+const EMAIL_FROM =
+  process.env.EMAIL_FROM || `BOI Car Storage <${SMTP_USER}>`;
+
 function getTransporter() {
   return nodemailer.createTransport({
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '587'),
+    port: parseInt(process.env.SMTP_PORT || '587', 10),
     secure: process.env.SMTP_SECURE === 'true',
     auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS
+      user: SMTP_USER,
+      pass: SMTP_PASS
     }
   });
 }
@@ -153,7 +161,7 @@ router.post('/send-accounts', requireAuth, async (req, res) => {
 
     try {
       await transporter.sendMail({
-        from: process.env.EMAIL_FROM || carpark.email,
+        from: EMAIL_FROM,
         to: emailTo,
         subject: `${carpark.name} - ${monthName} ${y} Account Statement`,
         html
@@ -186,7 +194,7 @@ router.post('/test', requireAuth, async (req, res) => {
   const transporter = getTransporter();
   try {
     await transporter.sendMail({
-      from: process.env.EMAIL_FROM || 'test@carpark.com',
+      from: EMAIL_FROM,
       to: email,
       subject: 'Carpark System - Test Email',
       html: '<h2>Test Email</h2><p>Your email configuration is working correctly.</p>'
