@@ -36,7 +36,7 @@ async function initInvoicePage() {
     });
   }
 
-  // Load available keys
+  // Load available keys and auto-select the lowest available one
   const keyRes = await fetch('/api/keybox/available');
   if (keyRes.ok) {
     const keys = await keyRes.json();
@@ -47,6 +47,10 @@ async function initInvoicePage() {
       opt.textContent = `Key ${k}`;
       keySel.appendChild(opt);
     });
+    // Auto-select first available key for new invoices
+    if (keys.length > 0 && !new URLSearchParams(window.location.search).get('id')) {
+      keySel.value = keys[0];
+    }
   }
 
   // Check URL params for loading existing invoice
@@ -205,7 +209,43 @@ function updateNightsAndDisplay() {
   document.getElementById('time-in-display').textContent = timeIn || '--:--';
 }
 
-// Event listeners
+// ─── Rego auto-populate ───────────────────────────────────────────────────────
+// When staff enters a rego and moves away, look up the most recent invoice for
+// that rego and fill in all customer/vehicle details automatically.
+document.getElementById('inv-rego').addEventListener('blur', async () => {
+  const rego = document.getElementById('inv-rego').value.trim();
+  if (!rego || currentInvoiceId) return; // Don't overwrite when editing existing
+
+  const res = await fetch(`/api/invoices/lookup-rego?rego=${encodeURIComponent(rego)}`);
+  if (!res.ok) return;
+  const inv = await res.json();
+  if (!inv) return; // New customer, no history
+
+  // Only populate fields that are currently empty
+  const fill = (id, val) => { if (val && !document.getElementById(id).value) document.getElementById(id).value = val; };
+  fill('inv-make', inv.make);
+  fill('inv-last-name', inv.last_name);
+  fill('inv-first-name', inv.first_name);
+  fill('inv-phone', inv.phone);
+  fill('inv-email', inv.email);
+  if (inv.customer_id && !document.getElementById('inv-customer-id').value) {
+    document.getElementById('inv-customer-id').value = inv.customer_id;
+  }
+  // Show customer alert if any
+  const alertText = inv.customer_alert || inv.customer_alert_stored;
+  if (alertText) {
+    document.getElementById('customer-alert-text').textContent = alertText;
+    document.getElementById('customer-alert-display').classList.remove('d-none');
+  }
+  showAlert(`✓ Details auto-filled from previous visit (Invoice #${inv.invoice_number})`, 'info');
+});
+
+// Also trigger lookup on Enter key in rego field
+document.getElementById('inv-rego').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); document.getElementById('inv-rego').blur(); }
+});
+
+// ─── Event listeners ──────────────────────────────────────────────────────────
 document.getElementById('inv-date-in').addEventListener('change', updateNightsAndDisplay);
 document.getElementById('inv-return-date').addEventListener('change', updateNightsAndDisplay);
 document.getElementById('inv-time-in').addEventListener('change', updateNightsAndDisplay);
@@ -231,6 +271,60 @@ document.getElementById('split-payment-toggle').addEventListener('change', (e) =
 document.getElementById('inv-no-key').addEventListener('change', (e) => {
   document.getElementById('inv-key-number').disabled = e.target.checked;
   if (e.target.checked) document.getElementById('inv-key-number').value = '';
+});
+
+// ─── Flight arrival time selector → Return Time ───────────────────────────────
+// When a flight arrival is selected, copy the time into the Return Time field
+document.getElementById('inv-flight-arrival-select').addEventListener('change', (e) => {
+  if (e.target.value) {
+    document.getElementById('inv-return-time').value = e.target.value;
+    // Reset select back to placeholder so it's usable again
+    e.target.value = '';
+  }
+});
+
+// ─── 10% Discount: auto-recalculate when toggled (if price already calculated) ─
+document.getElementById('inv-discount-10').addEventListener('change', () => {
+  const total = parseFloat(document.getElementById('inv-total-price').value);
+  if (!total || total === 0) return; // Nothing to recalculate yet
+
+  const breakdown = document.getElementById('price-breakdown').textContent;
+  // Extract base price from breakdown (recalculate via button or apply/remove discount directly)
+  const isChecked = document.getElementById('inv-discount-10').checked;
+
+  // Re-fetch a clean calculate if we have the nights value
+  const nights = parseInt(document.getElementById('inv-nights').value) || 1;
+  const accountId = document.getElementById('inv-account-customer').value;
+  fetch(`/api/invoices/calculate-price?nights=${nights}&account_customer_id=${accountId}`)
+    .then(r => r.json())
+    .then(data => {
+      let newTotal = data.total;
+      if (isChecked) newTotal = newTotal * 0.9;
+      document.getElementById('inv-total-price').value = newTotal.toFixed(2);
+      document.getElementById('inv-payment-amount').value = newTotal.toFixed(2);
+      let b = `${nights} night(s) × $${data.dailyRate}/night = $${data.total.toFixed(2)}`;
+      if (data.discountPercent > 0) b += ` (${data.discountPercent}% account discount)`;
+      if (isChecked) b += ` → -10% = $${newTotal.toFixed(2)}`;
+      document.getElementById('price-breakdown').textContent = b;
+    });
+});
+
+// ─── Auto-release key when vehicle is collected ───────────────────────────────
+document.getElementById('inv-picked-up').addEventListener('change', async (e) => {
+  const status = e.target.value;
+  if (status !== 'Picked Up' && status !== 'Delivered') return;
+  if (!currentInvoiceId) return; // Not saved yet
+
+  const keyNum = document.getElementById('inv-key-number').value;
+  if (!keyNum || document.getElementById('inv-no-key').checked) return;
+
+  // Release the key automatically
+  try {
+    await fetch(`/api/keybox/${keyNum}/release`, { method: 'POST' });
+    showAlert(`Key ${keyNum} released — slot now available`, 'success');
+  } catch (err) {
+    console.warn('Key release failed:', err);
+  }
 });
 
 // Auto-fill payment when status selected

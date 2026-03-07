@@ -150,6 +150,18 @@
               </div>
               <div class="col-md-4">
                 <label class="form-label">Return Time</label>
+                <!-- Flight arrival quick-picker for Kerikeri/BOI Airport (KKE) -->
+                <select class="form-select form-select-sm mb-1" id="inv-flight-arrival-select" title="Select a BOI arriving flight to auto-fill time">
+                  <option value="">✈ Arriving flights (BOI/KKE)</option>
+                  <option value="08:45">08:45 – Morning (NZ8391)</option>
+                  <option value="11:45">11:45 – Midday (NZ8393)</option>
+                  <option value="14:35">14:35 – Afternoon (NZ8395)</option>
+                  <option value="16:35">16:35 – Late afternoon (NZ8397)</option>
+                  <option value="19:00">19:00 – Evening (NZ8399)</option>
+                  <option value="09:30">09:30 – Charter / other</option>
+                  <option value="12:30">12:30 – Charter / other</option>
+                  <option value="17:00">17:00 – Charter / other</option>
+                </select>
                 <input type="time" class="form-control" id="inv-return-time" value="14:35">
               </div>
               <div class="col-md-4">
@@ -224,7 +236,9 @@
               <div class="col-6">
                 <div class="form-check">
                   <input class="form-check-input" type="checkbox" id="inv-discount-10">
-                  <label class="form-check-label fw-bold" for="inv-discount-10">-10% Discount</label>
+                  <label class="form-check-label fw-bold text-success" for="inv-discount-10">
+                    -10% Discount <small class="text-muted fw-normal">(optional)</small>
+                  </label>
                 </div>
               </div>
               <div class="col-6">

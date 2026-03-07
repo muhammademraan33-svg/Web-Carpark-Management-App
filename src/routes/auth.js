@@ -40,7 +40,7 @@ router.post('/login', (req, res) => {
 
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
-  req.session.destroy();
+  req.session = null; // cookie-session: clear by setting to null
   res.json({ success: true });
 });
 

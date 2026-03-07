@@ -1,9 +1,8 @@
 require('dotenv').config({ path: './config.env' });
 const express = require('express');
-const session = require('express-session');
+const cookieSession = require('cookie-session');
 const path = require('path');
 const cron = require('node-cron');
-const MemoryStore = require('memorystore')(session);
 
 const { db, initializeDatabase } = require('./src/database');
 
@@ -29,20 +28,20 @@ app.use((req, res, next) => {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Sessions (in-memory store – pure JS, no native deps)
-// On Vercel, cookies must be secure (HTTPS only) since all traffic is over HTTPS
-const isVercel = !!process.env.VERCEL;
-app.use(session({
-  store: new MemoryStore({ checkPeriod: 86400000 }), // prune expired sessions every 24h
-  secret: process.env.SESSION_SECRET || 'carpark_secret_2026',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: isVercel || process.env.NODE_ENV === 'production', // HTTPS only on Vercel/production
-    httpOnly: true,
-    sameSite: 'lax', // Standard for same-site requests
-    maxAge: 8 * 60 * 60 * 1000 // 8 hours
-  }
+// ─── Sessions (cookie-based – works on Vercel serverless) ────────────────────
+// cookie-session stores the entire session payload in a signed cookie so there
+// is NO server-side state.  This survives across Vercel's stateless invocations.
+const isProduction = !!process.env.VERCEL || process.env.NODE_ENV === 'production';
+app.use(cookieSession({
+  name: 'cpsess',
+  keys: [
+    process.env.SESSION_SECRET || 'carpark_secret_2026',
+    process.env.SESSION_SECRET_2 || 'carpark_secret_alt_2026'
+  ],
+  maxAge: 8 * 60 * 60 * 1000, // 8 hours
+  secure: isProduction,        // HTTPS-only cookies in production
+  httpOnly: true,
+  sameSite: 'lax'
 }));
 
 // Serve static files

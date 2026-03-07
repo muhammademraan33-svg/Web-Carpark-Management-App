@@ -31,6 +31,24 @@ router.get('/calculate-price', requireAuth, (req, res) => {
   res.json({ nights: n, dailyRate, total: Math.round(total * 100) / 100, discountPercent });
 });
 
+// GET /api/invoices/lookup-rego?rego=ABC123
+// Returns the most recent invoice for a given rego so customer details auto-populate
+router.get('/lookup-rego', requireAuth, (req, res) => {
+  const carparkId = req.session.carparkId || 1;
+  const { rego } = req.query;
+  if (!rego) return res.json(null);
+
+  const invoice = db.prepare(`
+    SELECT i.*, c.alert_message as customer_alert_stored
+    FROM invoices i
+    LEFT JOIN customers c ON i.customer_id = c.id
+    WHERE i.carpark_id = ? AND UPPER(i.rego) = UPPER(?) AND i.void = 0
+    ORDER BY i.created_at DESC LIMIT 1
+  `).get(carparkId, rego.trim());
+
+  res.json(invoice || null);
+});
+
 // GET /api/invoices/next-number
 router.get('/next-number', requireAuth, (req, res) => {
   const carparkId = req.session.carparkId || 1;
