@@ -30,14 +30,17 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Sessions (in-memory store – pure JS, no native deps)
+// On Vercel, cookies must be secure (HTTPS only) since all traffic is over HTTPS
+const isVercel = !!process.env.VERCEL;
 app.use(session({
   store: new MemoryStore({ checkPeriod: 86400000 }), // prune expired sessions every 24h
   secret: process.env.SESSION_SECRET || 'carpark_secret_2026',
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: false,
+    secure: isVercel || process.env.NODE_ENV === 'production', // HTTPS only on Vercel/production
     httpOnly: true,
+    sameSite: 'lax', // Standard for same-site requests
     maxAge: 8 * 60 * 60 * 1000 // 8 hours
   }
 }));
@@ -165,8 +168,8 @@ if (require.main === module) {
       console.log(`\n================================================`);
       console.log(`  BOI Car Storage - Carpark Management System`);
       console.log(`  Running at: http://localhost:${PORT}`);
-      console.log(`  Default login: admin / admin123`);
-      console.log(`  Staff login:   staff / staff123`);
+      console.log(`  Default login: admin / Admin@BOI2026!Secure`);
+      console.log(`  Staff login:   staff / Staff@BOI2026!Secure`);
       console.log(`================================================\n`);
     });
   }).catch(err => {

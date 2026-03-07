@@ -360,20 +360,34 @@ async function initializeDatabase() {
       );
   }
 
-  // Default admin user
+  // Default admin user (secure password: Admin@BOI2026!Secure)
   const adminExists = wrapStatement('SELECT id FROM users WHERE username = ?').get('admin');
   if (!adminExists) {
-    const hash = bcrypt.hashSync('admin123', 10);
+    const hash = bcrypt.hashSync('Admin@BOI2026!Secure', 10);
     wrapStatement(`INSERT INTO users (username, password, name, email, role, carpark_id) VALUES (?, ?, ?, ?, ?, ?)`)
       .run('admin', hash, 'Administrator', 'admin@carparkyard.co.nz', 'admin', 1);
+  } else {
+    // Update existing admin password to secure one if it's still the old weak password
+    const admin = wrapStatement('SELECT password FROM users WHERE username = ?').get('admin');
+    if (admin && bcrypt.compareSync('admin123', admin.password)) {
+      const hash = bcrypt.hashSync('Admin@BOI2026!Secure', 10);
+      wrapStatement('UPDATE users SET password = ? WHERE username = ?').run(hash, 'admin');
+    }
   }
 
-  // Default staff user
+  // Default staff user (secure password: Staff@BOI2026!Secure)
   const staffExists = wrapStatement('SELECT id FROM users WHERE username = ?').get('staff');
   if (!staffExists) {
-    const hash = bcrypt.hashSync('staff123', 10);
+    const hash = bcrypt.hashSync('Staff@BOI2026!Secure', 10);
     wrapStatement(`INSERT INTO users (username, password, name, email, role, carpark_id) VALUES (?, ?, ?, ?, ?, ?)`)
       .run('staff', hash, 'Flo', 'flo@carparkyard.co.nz', 'staff', 1);
+  } else {
+    // Update existing staff password to secure one if it's still the old weak password
+    const staff = wrapStatement('SELECT password FROM users WHERE username = ?').get('staff');
+    if (staff && bcrypt.compareSync('staff123', staff.password)) {
+      const hash = bcrypt.hashSync('Staff@BOI2026!Secure', 10);
+      wrapStatement('UPDATE users SET password = ? WHERE username = ?').run(hash, 'staff');
+    }
   }
 
   // Default pricing rules

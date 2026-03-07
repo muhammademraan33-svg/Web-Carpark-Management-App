@@ -34,11 +34,11 @@ QUICK START (LOCAL)
 
 DEFAULT LOGINS
 --------------
-  Admin user:   admin  / admin123
-  Staff user:   staff  / staff123
+  Admin user:   admin  / Admin@BOI2026!Secure
+  Staff user:   staff  / Staff@BOI2026!Secure
 
-  IMPORTANT: Change these passwords immediately after first login
-  (Admin → Admin Settings → Change Password tab)
+  These are secure passwords that meet modern security requirements.
+  You can change them after login via Admin → Admin Settings → Change Password tab.
 
 PROJECT STRUCTURE
 -----------------
