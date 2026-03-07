@@ -5,6 +5,28 @@ let currentInvoiceId = null;
 let staffList = [];
 let accountCustomers = [];
 
+// ─── Customer alert helpers (robust if elements missing) ──────────────────────
+function getCustomerAlertElement() {
+  return document.getElementById('customer-alert-text');
+}
+
+function getCustomerAlertDisplay() {
+  return document.getElementById('customer-alert-display');
+}
+
+function getCustomerAlertText() {
+  const el = getCustomerAlertElement();
+  return el ? (el.textContent || '') : '';
+}
+
+function setCustomerAlertText(text) {
+  const el = getCustomerAlertElement();
+  const box = getCustomerAlertDisplay();
+  if (!el || !box) return; // fail-safe if HTML is out of sync
+  el.textContent = text || '';
+  box.classList.toggle('d-none', !text);
+}
+
 async function initInvoicePage() {
   const user = await checkAuth();
   if (!user) return;
@@ -95,7 +117,8 @@ async function newInvoice() {
   document.getElementById('inv-discount-10').checked = false;
   document.getElementById('inv-account-customer').value = '';
   document.getElementById('price-breakdown').textContent = '';
-  document.getElementById('customer-alert-display').classList.add('d-none');
+  // Clear any existing customer alert (if the alert elements exist)
+  setCustomerAlertText('');
 
   // Set default dates
   const now = new Date();
@@ -184,8 +207,7 @@ async function loadInvoice(invoiceNumber, invoiceId) {
 
   // Customer alert
   if (inv.customer_alert) {
-    document.getElementById('customer-alert-text').textContent = inv.customer_alert;
-    document.getElementById('customer-alert-display').classList.remove('d-none');
+    setCustomerAlertText(inv.customer_alert);
   }
 
   updateNightsAndDisplay();
@@ -234,8 +256,7 @@ document.getElementById('inv-rego').addEventListener('blur', async () => {
   // Show customer alert if any
   const alertText = inv.customer_alert || inv.customer_alert_stored;
   if (alertText) {
-    document.getElementById('customer-alert-text').textContent = alertText;
-    document.getElementById('customer-alert-display').classList.remove('d-none');
+    setCustomerAlertText(alertText);
   }
   showAlert(`✓ Details auto-filled from previous visit (Invoice #${inv.invoice_number})`, 'info');
 });
@@ -400,8 +421,7 @@ document.getElementById('btn-search-customer').addEventListener('click', async (
       document.getElementById('inv-phone').value = btn.dataset.phone;
       document.getElementById('inv-email').value = btn.dataset.email;
       if (btn.dataset.alert) {
-        document.getElementById('customer-alert-text').textContent = btn.dataset.alert;
-        document.getElementById('customer-alert-display').classList.remove('d-none');
+        setCustomerAlertText(btn.dataset.alert);
       }
       container.innerHTML = '';
       document.getElementById('customer-search').value = '';
@@ -431,18 +451,13 @@ document.getElementById('btn-new-invoice').addEventListener('click', () => {
 
 // Customer alert modal
 document.getElementById('btn-customer-alert').addEventListener('click', () => {
-  document.getElementById('modal-alert-text').value = document.getElementById('customer-alert-text').textContent || '';
+  document.getElementById('modal-alert-text').value = getCustomerAlertText() || '';
   new bootstrap.Modal('#alertModal').show();
 });
 
 document.getElementById('btn-save-alert').addEventListener('click', () => {
   const alertText = document.getElementById('modal-alert-text').value.trim();
-  document.getElementById('customer-alert-text').textContent = alertText;
-  if (alertText) {
-    document.getElementById('customer-alert-display').classList.remove('d-none');
-  } else {
-    document.getElementById('customer-alert-display').classList.add('d-none');
-  }
+  setCustomerAlertText(alertText);
   bootstrap.Modal.getInstance('#alertModal').hide();
 });
 
@@ -484,7 +499,7 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
     picked_up: document.getElementById('inv-picked-up').value,
     staff_id: document.getElementById('inv-staff').value,
     notes: document.getElementById('inv-notes').value,
-    customer_alert: document.getElementById('customer-alert-text').textContent || null
+    customer_alert: getCustomerAlertText() || null
   };
 
   const btn = document.getElementById('btn-save');
