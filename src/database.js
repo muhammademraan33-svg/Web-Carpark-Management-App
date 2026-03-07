@@ -1,120 +1,171 @@
-const bcrypt = require('bcryptjs');
-const path = require('path');
-const fs = require('fs');
+/**
+ * database.js
+ *
+ * Unified async database layer.
+ *
+ * ┌─────────────────────────────────────────────────────┐
+ * │  Environment        │ Backend                       │
+ * │─────────────────────┼───────────────────────────────│
+ * │  TURSO_DATABASE_URL │ @libsql/client  (Turso cloud) │
+ * │  (not set)          │ sql.js  (local /tmp SQLite)   │
+ * └─────────────────────┴───────────────────────────────┘
+ *
+ * Exported `db` object API (all async):
+ *   db.prepare(sql)  → { get(...args), all(...args), run(...args) }
+ *   db.exec(sql)     → Promise<void>
+ *
+ * Route handlers must `await` every db call:
+ *   const row  = await db.prepare('SELECT...').get(p1, p2);
+ *   const rows = await db.prepare('SELECT...').all(p1);
+ *   const r    = await db.prepare('INSERT...').run(p1, p2);
+ *   // r.lastInsertRowid, r.changes
+ */
 
-// On Vercel the project root is read-only; /tmp is the only writable directory.
-// Locally we keep the DB next to the project root so it persists between restarts.
+const bcrypt = require('bcryptjs');
+const path   = require('path');
+const fs     = require('fs');
+
+// ─── Backend selection ────────────────────────────────────────────────────────
+const USE_TURSO = !!(process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN);
+
+// ─── Local sql.js state ───────────────────────────────────────────────────────
+let _SQL = null;   // sql.js constructor (WASM)
+let _db  = null;   // sql.js Database instance
+let _tursoClient = null; // @libsql/client instance
+
 const DB_PATH = process.env.VERCEL
   ? '/tmp/carpark.db'
   : path.join(__dirname, '..', 'carpark.db');
 
-// ── sql.js wrapper providing a synchronous better-sqlite3-like API ──
-// sql.js initialises via WASM (async), so we wait for it once at startup.
-
-let _SQL = null;          // sql.js constructor
-let _db  = null;          // sql.js Database instance
-
-// Internal save-to-disk helper
+// ─── sql.js helpers ───────────────────────────────────────────────────────────
 function saveToDisk() {
   if (!_db) return;
   try {
     const data = _db.export();
     fs.writeFileSync(DB_PATH, Buffer.from(data));
   } catch (e) {
-    // non-fatal – log only
     console.error('DB save error:', e.message);
   }
 }
 
-// Wrap a sql.js prepared statement into a better-sqlite3-like object.
-function wrapStatement(sql) {
-  // Always create a fresh statement; sql.js stmts are lightweight.
-  function makeStmt() {
-    return _db.prepare(sql);
+function sqlJsNorm(args) {
+  if (args.length === 0) return [];
+  if (args.length === 1 && args[0] !== null && typeof args[0] === 'object' && !Array.isArray(args[0])) {
+    const obj = {};
+    for (const [k, v] of Object.entries(args[0])) obj[k] = v === undefined ? null : v;
+    return obj;
   }
+  return args.map(v => (v === undefined ? null : v));
+}
 
-  // Normalise better-sqlite3 spread args → sql.js array/object.
-  // Also converts undefined → null so sql.js doesn't throw on unknown types.
-  function norm(args) {
-    if (args.length === 0) return [];
-    if (args.length === 1 && args[0] !== null && typeof args[0] === 'object' && !Array.isArray(args[0])) {
-      // Named params object – replace undefined values with null
-      const obj = {};
-      for (const [k, v] of Object.entries(args[0])) {
-        obj[k] = v === undefined ? null : v;
-      }
-      return obj;
-    }
-    // Positional params – replace undefined with null
-    return args.map(v => (v === undefined ? null : v));
-  }
+function sqlJsWrap(sql) {
+  function makeStmt() { return _db.prepare(sql); }
 
   return {
-    /** Returns first matching row as a plain object, or undefined. */
-    get(...args) {
+    async get(...args) {
       const stmt = makeStmt();
       try {
-        stmt.bind(norm(args));
-        if (stmt.step()) {
-          return stmt.getAsObject();
-        }
-        return undefined;
-      } finally {
-        stmt.free();
-      }
+        stmt.bind(sqlJsNorm(args));
+        return stmt.step() ? stmt.getAsObject() : undefined;
+      } finally { stmt.free(); }
     },
-
-    /** Returns all matching rows as plain objects. */
-    all(...args) {
+    async all(...args) {
       const stmt = makeStmt();
       const rows = [];
       try {
-        stmt.bind(norm(args));
-        while (stmt.step()) {
-          rows.push(stmt.getAsObject());
-        }
+        stmt.bind(sqlJsNorm(args));
+        while (stmt.step()) rows.push(stmt.getAsObject());
         return rows;
-      } finally {
-        stmt.free();
-      }
+      } finally { stmt.free(); }
     },
-
-    /** Executes a write statement; returns { lastInsertRowid, changes }. */
-    run(...args) {
+    async run(...args) {
       const stmt = makeStmt();
       try {
-        stmt.run(norm(args));
+        stmt.run(sqlJsNorm(args));
         const lastInsertRowid = _db.exec('SELECT last_insert_rowid()')[0].values[0][0];
-        const changes = _db.exec('SELECT changes()')[0].values[0][0];
+        const changes         = _db.exec('SELECT changes()')[0].values[0][0];
         saveToDisk();
         return { lastInsertRowid, changes };
-      } finally {
-        stmt.free();
-      }
+      } finally { stmt.free(); }
     }
   };
 }
 
-// The exported db object – mirrors the better-sqlite3 API used in routes.
+// ─── Turso helpers ────────────────────────────────────────────────────────────
+function tursoNorm(args) {
+  // @libsql/client wants an array of primitives
+  if (args.length === 0) return [];
+  if (args.length === 1 && args[0] !== null && typeof args[0] === 'object' && !Array.isArray(args[0])) {
+    return Object.values(args[0]).map(v => (v === undefined ? null : v));
+  }
+  return args.map(v => (v === undefined ? null : v));
+}
+
+function tursoRowToObj(row, columns) {
+  const obj = {};
+  columns.forEach((col, i) => { obj[col] = row[i]; });
+  return obj;
+}
+
+function tursoWrap(sql) {
+  return {
+    async get(...args) {
+      const result = await _tursoClient.execute({ sql, args: tursoNorm(args) });
+      if (!result.rows || result.rows.length === 0) return undefined;
+      const cols = result.columns;
+      const row  = result.rows[0];
+      // rows can be objects already (client version dependent)
+      if (typeof row === 'object' && !Array.isArray(row)) return row;
+      return tursoRowToObj(row, cols);
+    },
+    async all(...args) {
+      const result = await _tursoClient.execute({ sql, args: tursoNorm(args) });
+      const cols = result.columns;
+      return (result.rows || []).map(row => {
+        if (typeof row === 'object' && !Array.isArray(row)) return row;
+        return tursoRowToObj(row, cols);
+      });
+    },
+    async run(...args) {
+      const result = await _tursoClient.execute({ sql, args: tursoNorm(args) });
+      return {
+        lastInsertRowid: result.lastInsertRowid ?? 0,
+        changes:         result.rowsAffected  ?? 0,
+      };
+    }
+  };
+}
+
+// ─── Exported db proxy ────────────────────────────────────────────────────────
 const db = new Proxy({}, {
   get(_, prop) {
-    if (!_db) throw new Error('Database not initialised yet');
     if (prop === 'prepare') {
-      return (sql) => wrapStatement(sql);
+      return (sql) => USE_TURSO ? tursoWrap(sql) : sqlJsWrap(sql);
     }
     if (prop === 'exec') {
-      return (sql) => {
-        _db.run(sql);
-        saveToDisk();
+      return async (sql) => {
+        if (USE_TURSO) {
+          await _tursoClient.execute(sql);
+        } else {
+          _db.run(sql);
+          saveToDisk();
+        }
       };
     }
     if (prop === 'pragma') {
-      return (str) => {
-        try { _db.run(`PRAGMA ${str}`); } catch (e) { /* ignore unsupported */ }
+      return async (str) => {
+        try {
+          if (USE_TURSO) await _tursoClient.execute(`PRAGMA ${str}`);
+          else _db.run(`PRAGMA ${str}`);
+        } catch (_) { /* ignore */ }
       };
     }
     if (prop === 'transaction') {
-      return (fn) => (...args) => {
+      return (fn) => async (...args) => {
+        if (USE_TURSO) {
+          // Turso supports batch for transactions
+          return await fn(...args);
+        }
         _db.run('BEGIN');
         try {
           const result = fn(...args);
@@ -131,36 +182,45 @@ const db = new Proxy({}, {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// initializeDatabase – MUST be awaited before the server starts taking requests
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── initializeDatabase ───────────────────────────────────────────────────────
 async function initializeDatabase() {
-  // Load sql.js WASM asynchronously (one-time cost).
-  // Use the WASM bundled inside the sql.js npm package so it works everywhere
-  // (local dev, Vercel serverless, Docker) without fetching from a CDN.
-  if (!_SQL) {
-    const initSqlJs = require('sql.js');
-    const wasmDir = path.dirname(require.resolve('sql.js/dist/sql-wasm.js'));
-    _SQL = await initSqlJs({ locateFile: f => path.join(wasmDir, f) });
-  }
-
-  // Restore from file or create fresh
-  if (fs.existsSync(DB_PATH)) {
-    const fileBuffer = fs.readFileSync(DB_PATH);
-    _db = new _SQL.Database(fileBuffer);
+  if (USE_TURSO) {
+    // ── Turso path ────────────────────────────────────────────────────────────
+    if (!_tursoClient) {
+      const { createClient } = require('@libsql/client');
+      _tursoClient = createClient({
+        url:       process.env.TURSO_DATABASE_URL,
+        authToken: process.env.TURSO_AUTH_TOKEN,
+      });
+      console.log('Using Turso hosted SQLite database');
+    }
   } else {
-    _db = new _SQL.Database();
+    // ── sql.js path ───────────────────────────────────────────────────────────
+    if (!_SQL) {
+      const initSqlJs = require('sql.js');
+      const wasmDir = path.dirname(require.resolve('sql.js/dist/sql-wasm.js'));
+      _SQL = await initSqlJs({ locateFile: f => path.join(wasmDir, f) });
+    }
+    if (!_db) {
+      _db = fs.existsSync(DB_PATH)
+        ? new _SQL.Database(fs.readFileSync(DB_PATH))
+        : new _SQL.Database();
+    }
+    setInterval(saveToDisk, 10000);
+    process.on('exit', saveToDisk);
+    process.on('SIGINT', () => { saveToDisk(); process.exit(); });
+    console.log('Using sql.js SQLite (local)');
   }
 
-  // Auto-save every 10 seconds and on process exit
-  setInterval(saveToDisk, 10000);
-  process.on('exit', saveToDisk);
-  process.on('SIGINT', () => { saveToDisk(); process.exit(); });
+  // ── Schema (CREATE TABLE IF NOT EXISTS – safe to run every cold start) ─────
+  const exec = async (sql) => {
+    if (USE_TURSO) await _tursoClient.execute(sql);
+    else { _db.run(sql); }
+  };
 
-  // ── Schema ────────────────────────────────────────────────────────────────
-  _db.run(`PRAGMA foreign_keys = ON`);
+  await exec(`PRAGMA foreign_keys = ON`);
 
-  _db.run(`CREATE TABLE IF NOT EXISTS carparks (
+  await exec(`CREATE TABLE IF NOT EXISTS carparks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     address TEXT,
@@ -170,7 +230,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  _db.run(`CREATE TABLE IF NOT EXISTS users (
+  await exec(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
@@ -182,7 +242,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  _db.run(`CREATE TABLE IF NOT EXISTS customers (
+  await exec(`CREATE TABLE IF NOT EXISTS customers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     first_name TEXT,
     last_name TEXT,
@@ -195,7 +255,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  _db.run(`CREATE TABLE IF NOT EXISTS longterm_customers (
+  await exec(`CREATE TABLE IF NOT EXISTS longterm_customers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lt_number TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
@@ -212,7 +272,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  _db.run(`CREATE TABLE IF NOT EXISTS account_customers (
+  await exec(`CREATE TABLE IF NOT EXISTS account_customers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_name TEXT NOT NULL,
     contact_name TEXT,
@@ -228,7 +288,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  _db.run(`CREATE TABLE IF NOT EXISTS pricing_rules (
+  await exec(`CREATE TABLE IF NOT EXISTS pricing_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     carpark_id INTEGER DEFAULT 1,
     customer_type TEXT DEFAULT 'short',
@@ -239,7 +299,7 @@ async function initializeDatabase() {
     active INTEGER DEFAULT 1
   )`);
 
-  _db.run(`CREATE TABLE IF NOT EXISTS invoices (
+  await exec(`CREATE TABLE IF NOT EXISTS invoices (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     invoice_number INTEGER UNIQUE,
     carpark_id INTEGER DEFAULT 1,
@@ -281,7 +341,7 @@ async function initializeDatabase() {
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  _db.run(`CREATE TABLE IF NOT EXISTS key_box (
+  await exec(`CREATE TABLE IF NOT EXISTS key_box (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     carpark_id INTEGER DEFAULT 1,
     key_number INTEGER NOT NULL,
@@ -290,7 +350,7 @@ async function initializeDatabase() {
     UNIQUE(carpark_id, key_number)
   )`);
 
-  _db.run(`CREATE TABLE IF NOT EXISTS petty_cash (
+  await exec(`CREATE TABLE IF NOT EXISTS petty_cash (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     carpark_id INTEGER DEFAULT 1,
     date DATE NOT NULL,
@@ -302,7 +362,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  _db.run(`CREATE TABLE IF NOT EXISTS banking (
+  await exec(`CREATE TABLE IF NOT EXISTS banking (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     carpark_id INTEGER DEFAULT 1,
     date DATE UNIQUE NOT NULL,
@@ -315,7 +375,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  _db.run(`CREATE TABLE IF NOT EXISTS end_day (
+  await exec(`CREATE TABLE IF NOT EXISTS end_day (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     carpark_id INTEGER DEFAULT 1,
     date DATE UNIQUE NOT NULL,
@@ -331,7 +391,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  _db.run(`CREATE TABLE IF NOT EXISTS email_logs (
+  await exec(`CREATE TABLE IF NOT EXISTS email_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     carpark_id INTEGER DEFAULT 1,
     account_customer_id INTEGER,
@@ -344,143 +404,129 @@ async function initializeDatabase() {
     recipient_email TEXT
   )`);
 
-  // ── Seed data ─────────────────────────────────────────────────────────────
+  if (!USE_TURSO) saveToDisk();
 
-  // Default carpark
-  const carparkExists = wrapStatement('SELECT id FROM carparks WHERE id = 1').get();
-  if (!carparkExists) {
-    wrapStatement(`INSERT INTO carparks (id, name, address, phone, email, capacity) VALUES (?, ?, ?, ?, ?, ?)`)
-      .run(
-        1,
-        process.env.CARPARK_NAME || 'BOI Car Storage Yard',
+  // ── Seed data (safe – uses INSERT OR IGNORE / check-first) ─────────────────
+  const cp = await db.prepare('SELECT id FROM carparks WHERE id = 1').get();
+  if (!cp) {
+    await db.prepare(`INSERT INTO carparks (id, name, address, phone, email, capacity) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(1,
+        process.env.CARPARK_NAME    || 'BOI Car Storage Yard',
         process.env.CARPARK_ADDRESS || 'Bay of Islands, Northland, New Zealand',
-        process.env.CARPARK_PHONE || '+64 9 000 0000',
-        process.env.SMTP_USER || 'admin@carparkyard.co.nz',
-        100
-      );
+        process.env.CARPARK_PHONE   || '+64 9 000 0000',
+        process.env.SMTP_USER       || 'admin@carparkyard.co.nz',
+        100);
   }
 
-  // Default admin user (secure password: Admin@BOI2026!Secure)
-  const adminExists = wrapStatement('SELECT id FROM users WHERE username = ?').get('admin');
-  if (!adminExists) {
+  // Admin user
+  const adminRow = await db.prepare('SELECT id, password FROM users WHERE username = ?').get('admin');
+  if (!adminRow) {
     const hash = bcrypt.hashSync('Admin@BOI2026!Secure', 10);
-    wrapStatement(`INSERT INTO users (username, password, name, email, role, carpark_id) VALUES (?, ?, ?, ?, ?, ?)`)
+    await db.prepare(`INSERT INTO users (username, password, name, email, role, carpark_id) VALUES (?, ?, ?, ?, ?, ?)`)
       .run('admin', hash, 'Administrator', 'admin@carparkyard.co.nz', 'admin', 1);
-  } else {
-    // Update existing admin password to secure one if it's still the old weak password
-    const admin = wrapStatement('SELECT password FROM users WHERE username = ?').get('admin');
-    if (admin && bcrypt.compareSync('admin123', admin.password)) {
-      const hash = bcrypt.hashSync('Admin@BOI2026!Secure', 10);
-      wrapStatement('UPDATE users SET password = ? WHERE username = ?').run(hash, 'admin');
-    }
+  } else if (adminRow && bcrypt.compareSync('admin123', adminRow.password)) {
+    const hash = bcrypt.hashSync('Admin@BOI2026!Secure', 10);
+    await db.prepare('UPDATE users SET password = ? WHERE username = ?').run(hash, 'admin');
   }
 
-  // Default staff user (secure password: Staff@BOI2026!Secure)
-  const staffExists = wrapStatement('SELECT id FROM users WHERE username = ?').get('staff');
-  if (!staffExists) {
+  // Staff user
+  const staffRow = await db.prepare('SELECT id, password FROM users WHERE username = ?').get('staff');
+  if (!staffRow) {
     const hash = bcrypt.hashSync('Staff@BOI2026!Secure', 10);
-    wrapStatement(`INSERT INTO users (username, password, name, email, role, carpark_id) VALUES (?, ?, ?, ?, ?, ?)`)
+    await db.prepare(`INSERT INTO users (username, password, name, email, role, carpark_id) VALUES (?, ?, ?, ?, ?, ?)`)
       .run('staff', hash, 'Flo', 'flo@carparkyard.co.nz', 'staff', 1);
-  } else {
-    // Update existing staff password to secure one if it's still the old weak password
-    const staff = wrapStatement('SELECT password FROM users WHERE username = ?').get('staff');
-    if (staff && bcrypt.compareSync('staff123', staff.password)) {
-      const hash = bcrypt.hashSync('Staff@BOI2026!Secure', 10);
-      wrapStatement('UPDATE users SET password = ? WHERE username = ?').run(hash, 'staff');
-    }
+  } else if (staffRow && bcrypt.compareSync('staff123', staffRow.password)) {
+    const hash = bcrypt.hashSync('Staff@BOI2026!Secure', 10);
+    await db.prepare('UPDATE users SET password = ? WHERE username = ?').run(hash, 'staff');
   }
 
-  // Default pricing rules
-  const pricingExists = wrapStatement(`SELECT id FROM pricing_rules WHERE carpark_id = 1 AND customer_type = ?`).get('short');
-  if (!pricingExists) {
-    const ip = wrapStatement(`INSERT INTO pricing_rules (carpark_id, customer_type, days_from, days_to, daily_rate, description) VALUES (?, ?, ?, ?, ?, ?)`);
-    ip.run(1, 'short', 1, 1, 18.00, '1 day');
-    ip.run(1, 'short', 2, 3, 16.00, '2-3 days');
-    ip.run(1, 'short', 4, 7, 14.00, '4-7 days');
-    ip.run(1, 'short', 8, 14, 12.00, '8-14 days');
-    ip.run(1, 'short', 15, 30, 10.00, '15-30 days');
-    ip.run(1, 'short', 31, null, 8.00, '31+ days');
+  // Pricing rules
+  const priceRow = await db.prepare(`SELECT id FROM pricing_rules WHERE carpark_id = 1 AND customer_type = 'short'`).get();
+  if (!priceRow) {
+    const ip = db.prepare(`INSERT INTO pricing_rules (carpark_id, customer_type, days_from, days_to, daily_rate, description) VALUES (?, ?, ?, ?, ?, ?)`);
+    await ip.run(1, 'short',  1,  1, 18.00, '1 day');
+    await ip.run(1, 'short',  2,  3, 16.00, '2-3 days');
+    await ip.run(1, 'short',  4,  7, 14.00, '4-7 days');
+    await ip.run(1, 'short',  8, 14, 12.00, '8-14 days');
+    await ip.run(1, 'short', 15, 30, 10.00, '15-30 days');
+    await ip.run(1, 'short', 31, null, 8.00, '31+ days');
   }
 
-  // Key box (50 keys)
-  const keyExists = wrapStatement('SELECT id FROM key_box WHERE carpark_id = 1').get();
-  if (!keyExists) {
-    const ik = wrapStatement('INSERT OR IGNORE INTO key_box (carpark_id, key_number, status) VALUES (?, ?, ?)');
-    for (let i = 1; i <= 50; i++) {
-      ik.run(1, i, 'available');
-    }
+  // Key box (60 keys)
+  const keyRow = await db.prepare('SELECT id FROM key_box WHERE carpark_id = 1').get();
+  if (!keyRow) {
+    const ik = db.prepare('INSERT OR IGNORE INTO key_box (carpark_id, key_number, status) VALUES (?, ?, ?)');
+    for (let i = 1; i <= 60; i++) await ik.run(1, i, 'available');
   }
 
-  // Sample account customers (on-account type)
-  const acctExists = wrapStatement('SELECT id FROM account_customers WHERE carpark_id = 1').get();
-  if (!acctExists) {
-    const ia = wrapStatement(`INSERT INTO account_customers (company_name, contact_name, phone, email, billing_email, payment_link, carpark_id) VALUES (?, ?, ?, ?, ?, ?, ?)`);
-    ia.run('CTM Corrections Travel Team', 'John Smith', '09 000 0001', 'accounts@ctm.co.nz', 'accounts@ctm.co.nz', '', 1);
-    ia.run('Far North District Council', 'Sarah Jones', '09 000 0002', 'accounts@fndc.govt.nz', 'accounts@fndc.govt.nz', '', 1);
-    ia.run('Top Energy', 'Mike Brown', '09 000 0003', 'accounts@topenergy.co.nz', 'accounts@topenergy.co.nz', '', 1);
+  // Account customers
+  const acctRow = await db.prepare('SELECT id FROM account_customers WHERE carpark_id = 1').get();
+  if (!acctRow) {
+    const ia = db.prepare(`INSERT INTO account_customers (company_name, contact_name, phone, email, billing_email, payment_link, carpark_id) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+    await ia.run('CTM Corrections Travel Team', 'John Smith',  '09 000 0001', 'accounts@ctm.co.nz',       'accounts@ctm.co.nz',       '', 1);
+    await ia.run('Far North District Council',  'Sarah Jones', '09 000 0002', 'accounts@fndc.govt.nz',     'accounts@fndc.govt.nz',     '', 1);
+    await ia.run('Top Energy',                  'Mike Brown',  '09 000 0003', 'accounts@topenergy.co.nz',  'accounts@topenergy.co.nz',  '', 1);
   }
 
-  // Sample long-term customers
-  const ltExists = wrapStatement('SELECT id FROM longterm_customers WHERE carpark_id = 1').get();
-  if (!ltExists) {
-    const il = wrapStatement(`INSERT INTO longterm_customers (lt_number, name, rego_1, rego_2, phone, rate, carpark_id) VALUES (?, ?, ?, ?, ?, ?, ?)`);
-    il.run('LT1',  'Melissa Gate',     'GUA500', '',       '',             120.00, 1);
-    il.run('LT2',  'Steve Hindmarsh',  'GZK80',  '',       '0279601425',   120.00, 1);
-    il.run('LT3',  'Ben Dalton',       'QTB341', '',       '021432566',    120.00, 1);
-    il.run('LT4',  'Franco Lovrich',   'ZS6398', '',       '02041802939',  120.00, 1);
-    il.run('LT5',  'Jan Carter',       'KDS554', '',       '',             120.00, 1);
-    il.run('LT6',  'Tony Chapman',     'LNP252', 'EUT929', '0272428605',   120.00, 1);
-    il.run('LT7',  'Adam Parore',      'AWY148', '',       '021781250',    120.00, 1);
-    il.run('LT8',  'Geoff Tane',       'KXN786', '',       '',             120.00, 1);
-    il.run('LT9',  'Paul Houghton',    'PKB220', '',       '021549833',    120.00, 1);
-    il.run('LT10', 'Helen Rodgers',    'LDT299', '',       '',             120.00, 1);
-    il.run('LT11', 'Chris Moore',      'HVX801', '',       '0276543219',   120.00, 1);
-    il.run('LT12', 'Jane Baker',       'GUW543', '',       '',             120.00, 1);
-    il.run('LT13', 'Tony Packer',      'NPL423', 'CAB309', '0211234567',   120.00, 1);
-    il.run('LT14', 'Sam Wheeler',      'PWX311', '',       '',             120.00, 1);
-    il.run('LT15', 'Bob Williams',     'HYP677', '',       '0279876543',   120.00, 1);
+  // Long-term customers
+  const ltRow = await db.prepare('SELECT id FROM longterm_customers WHERE carpark_id = 1').get();
+  if (!ltRow) {
+    const il = db.prepare(`INSERT INTO longterm_customers (lt_number, name, rego_1, rego_2, phone, rate, carpark_id) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+    await il.run('LT1',  'Melissa Gate',    'GUA500', '',       '',             120.00, 1);
+    await il.run('LT2',  'Steve Hindmarsh', 'GZK80',  '',       '0279601425',   120.00, 1);
+    await il.run('LT3',  'Ben Dalton',      'QTB341', '',       '021432566',    120.00, 1);
+    await il.run('LT4',  'Franco Lovrich',  'ZS6398', '',       '02041802939',  120.00, 1);
+    await il.run('LT5',  'Jan Carter',      'KDS554', '',       '',             120.00, 1);
+    await il.run('LT6',  'Tony Chapman',    'LNP252', 'EUT929', '0272428605',   120.00, 1);
+    await il.run('LT7',  'Adam Parore',     'AWY148', '',       '021781250',    120.00, 1);
+    await il.run('LT8',  'Geoff Tane',      'KXN786', '',       '',             120.00, 1);
+    await il.run('LT9',  'Paul Houghton',   'PKB220', '',       '021549833',    120.00, 1);
+    await il.run('LT10', 'Helen Rodgers',   'LDT299', '',       '',             120.00, 1);
+    await il.run('LT11', 'Chris Moore',     'HVX801', '',       '0276543219',   120.00, 1);
+    await il.run('LT12', 'Jane Baker',      'GUW543', '',       '',             120.00, 1);
+    await il.run('LT13', 'Tony Packer',     'NPL423', 'CAB309', '0211234567',   120.00, 1);
+    await il.run('LT14', 'Sam Wheeler',     'PWX311', '',       '',             120.00, 1);
+    await il.run('LT15', 'Bob Williams',    'HYP677', '',       '0279876543',   120.00, 1);
   }
 
-  // Sample customers (short-term)
-  const custExists = wrapStatement('SELECT id FROM customers WHERE carpark_id = 1').get();
-  if (!custExists) {
-    const ic = wrapStatement(`INSERT INTO customers (first_name, last_name, phone, email, carpark_id) VALUES (?, ?, ?, ?, ?)`);
-    ic.run('Michael', 'Knight',  '02102624420', 'michael@email.com',  1);
-    ic.run('Adelice', 'Whitaker','0212277897',  'adelice@email.com',  1);
-    ic.run('Maurice', 'Daniels', '0274133677',  'maurice@email.com',  1);
+  // Sample customers
+  const custRow = await db.prepare('SELECT id FROM customers WHERE carpark_id = 1').get();
+  if (!custRow) {
+    const ic = db.prepare(`INSERT INTO customers (first_name, last_name, phone, email, carpark_id) VALUES (?, ?, ?, ?, ?)`);
+    await ic.run('Michael', 'Knight',  '02102624420', 'michael@email.com', 1);
+    await ic.run('Adelice', 'Whitaker','0212277897',  'adelice@email.com', 1);
+    await ic.run('Maurice', 'Daniels', '0274133677',  'maurice@email.com', 1);
   }
 
   // Sample invoices
-  const today = new Date().toISOString().split('T')[0];
-  const invExists = wrapStatement('SELECT id FROM invoices WHERE carpark_id = 1').get();
-  if (!invExists) {
-    const ii = wrapStatement(`INSERT INTO invoices
-      (invoice_number, carpark_id, customer_id, account_customer_id, key_number, rego, make,
+  const todayStr = new Date().toISOString().split('T')[0];
+  const invRow = await db.prepare('SELECT id FROM invoices WHERE carpark_id = 1').get();
+  if (!invRow) {
+    const ii = db.prepare(`INSERT INTO invoices
+      (invoice_number, carpark_id, customer_id, account_customer_id, key_number, rego,
        first_name, last_name, phone, email, date_in, time_in, return_date, return_time,
        stay_nights, total_price, paid_status, payment_amount, payment_amount_2, staff_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
-    ii.run(18974, 1, 1, null, 25, 'NZC356', 'FORD',
+    await ii.run(18974, 1, 1, null, 25, 'NZC356',
       'Michael', 'Knight', '02102624420', 'michael@email.com',
-      today, '14:37', today, '14:35', 3, 48.00, 'Eftpos', 48.00, 0, 1);
+      todayStr, '14:37', todayStr, '14:35', 3, 48.00, 'Eftpos', 48.00, 0, 1);
 
-    ii.run(18978, 1, 2, 1, 4, 'ESKPE', 'JEEP',
+    await ii.run(18978, 1, 2, 1, 4, 'ESKPE',
       'Adelice', 'Whitaker', '0212277897', 'adelice@email.com',
-      today, '10:00', today, '17:05', 2, 33.00, 'OnAcc', 33.00, 0, 1);
+      todayStr, '10:00', todayStr, '17:05', 2, 33.00, 'OnAcc', 33.00, 0, 1);
 
-    ii.run(18973, 1, 3, null, 22, 'KJM451', '',
+    await ii.run(18973, 1, 3, null, 22, 'KJM451',
       'Maurice', 'Daniels', '0274133677', 'maurice@email.com',
-      today, '09:00', today, '17:05', 3, 43.20, 'Eftpos', 43.20, 0, 1);
+      todayStr, '09:00', todayStr, '17:05', 3, 43.20, 'Eftpos', 43.20, 0, 1);
 
-    // Mark keys in use
-    wrapStatement("UPDATE key_box SET status = 'in_use', invoice_id = ? WHERE carpark_id = 1 AND key_number = ?").run(1, 25);
-    wrapStatement("UPDATE key_box SET status = 'in_use', invoice_id = ? WHERE carpark_id = 1 AND key_number = ?").run(2, 4);
-    wrapStatement("UPDATE key_box SET status = 'in_use', invoice_id = ? WHERE carpark_id = 1 AND key_number = ?").run(3, 22);
+    await db.prepare("UPDATE key_box SET status = 'in_use', invoice_id = 1 WHERE carpark_id = 1 AND key_number = 25").run();
+    await db.prepare("UPDATE key_box SET status = 'in_use', invoice_id = 2 WHERE carpark_id = 1 AND key_number = 4").run();
+    await db.prepare("UPDATE key_box SET status = 'in_use', invoice_id = 3 WHERE carpark_id = 1 AND key_number = 22").run();
   }
 
-  // Final save
-  saveToDisk();
-  console.log('Database initialized successfully');
+  if (!USE_TURSO) saveToDisk();
+  console.log(`Database initialized (${USE_TURSO ? 'Turso' : 'sql.js'}).`);
 }
 
 module.exports = { db, initializeDatabase };

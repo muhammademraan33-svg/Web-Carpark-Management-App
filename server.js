@@ -74,6 +74,7 @@ app.use('/api/email',     require('./src/routes/email'));
 app.use('/api/banking',   require('./src/routes/banking'));
 app.use('/api/admin',     require('./src/routes/admin'));
 app.use('/api/endday',    require('./src/routes/endday'));
+app.use('/api/flights',   require('./src/routes/flights'));
 
 // Root redirect
 app.get('/', (req, res) => {
@@ -99,20 +100,23 @@ cron.schedule('0 8 20 * *', async () => {
                         'July','August','September','October','November','December'];
     const monthName = monthNames[month - 1];
 
-    const carparks = db.prepare('SELECT * FROM carparks').all();
+    const carparks = await db.prepare('SELECT * FROM carparks').all();
 
     for (const carpark of carparks) {
-      const accounts = db.prepare('SELECT * FROM account_customers WHERE carpark_id = ? AND active = 1').all(carpark.id);
+      const accounts = await db.prepare('SELECT * FROM account_customers WHERE carpark_id = ? AND active = 1').all(carpark.id);
 
       const transporter = nodemailer.createTransport({
         host:   process.env.SMTP_HOST   || 'smtp.gmail.com',
         port:   parseInt(process.env.SMTP_PORT || '587'),
         secure: process.env.SMTP_SECURE === 'true',
-        auth:   { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+        auth:   {
+          user: process.env.SMTP_USER || 'videofootage0@gmail.com',
+          pass: process.env.SMTP_PASS || 'rhyb tdsd gpdp kyhg'
+        }
       });
 
       for (const account of accounts) {
-        const invoices = db.prepare(`
+        const invoices = await db.prepare(`
           SELECT * FROM invoices WHERE account_customer_id = ? AND void = 0
           AND DATE(date_in) >= ? AND DATE(date_in) <= ?
           ORDER BY date_in ASC
@@ -146,19 +150,19 @@ cron.schedule('0 8 20 * *', async () => {
 
         try {
           await transporter.sendMail({
-            from: process.env.EMAIL_FROM || carpark.email,
+            from: process.env.EMAIL_FROM || `BOI Car Storage <videofootage0@gmail.com>`,
             to:   emailTo,
             subject: `${carpark.name} - ${monthName} ${year} Account Statement`,
             html
           });
-          db.prepare(`INSERT INTO email_logs
+          await db.prepare(`INSERT INTO email_logs
             (carpark_id, account_customer_id, account_name, month, year, sent_at, status, recipient_email)
             VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`)
             .run(carpark.id, account.id, account.company_name, month, year, 'sent', emailTo);
           console.log(`Sent account email to ${emailTo}`);
         } catch (err) {
           console.error(`Failed to send to ${emailTo}:`, err.message);
-          db.prepare(`INSERT INTO email_logs
+          await db.prepare(`INSERT INTO email_logs
             (carpark_id, account_customer_id, account_name, month, year, status, error_msg, recipient_email)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
             .run(carpark.id, account.id, account.company_name, month, year, 'failed', err.message, emailTo);

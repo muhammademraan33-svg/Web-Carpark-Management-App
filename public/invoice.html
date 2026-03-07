@@ -66,7 +66,7 @@
           <!-- Vehicle & Key Info -->
           <div class="form-card mb-3">
             <div class="row g-2">
-              <div class="col-3">
+              <div class="col-4">
                 <label class="form-label">KEY #</label>
                 <select class="form-select" id="inv-key-number">
                   <option value="">No Key</option>
@@ -79,13 +79,9 @@
                   <label class="form-check-label" for="inv-no-key">No Key</label>
                 </div>
               </div>
-              <div class="col-3">
+              <div class="col-5">
                 <label class="form-label">Rego</label>
                 <input type="text" class="form-control text-uppercase fw-bold" id="inv-rego" placeholder="NZC356">
-              </div>
-              <div class="col-3">
-                <label class="form-label">Make</label>
-                <input type="text" class="form-control text-uppercase" id="inv-make" placeholder="FORD">
               </div>
             </div>
           </div>
@@ -150,17 +146,10 @@
               </div>
               <div class="col-md-4">
                 <label class="form-label">Return Time</label>
-                <!-- Flight arrival quick-picker for Kerikeri/BOI Airport (KKE) -->
-                <select class="form-select form-select-sm mb-1" id="inv-flight-arrival-select" title="Select a BOI arriving flight to auto-fill time">
-                  <option value="">✈ Arriving flights (BOI/KKE)</option>
-                  <option value="08:45">08:45 – Morning (NZ8391)</option>
-                  <option value="11:45">11:45 – Midday (NZ8393)</option>
-                  <option value="14:35">14:35 – Afternoon (NZ8395)</option>
-                  <option value="16:35">16:35 – Late afternoon (NZ8397)</option>
-                  <option value="19:00">19:00 – Evening (NZ8399)</option>
-                  <option value="09:30">09:30 – Charter / other</option>
-                  <option value="12:30">12:30 – Charter / other</option>
-                  <option value="17:00">17:00 – Charter / other</option>
+                <!-- Flight arrival quick-picker – populated dynamically from /api/flights/arrivals -->
+                <select class="form-select form-select-sm mb-1" id="inv-flight-arrival-select"
+                        title="Scheduled Air NZ arrivals BOI/KKE – select to auto-fill return time">
+                  <option value="">✈ Loading flights…</option>
                 </select>
                 <input type="time" class="form-control" id="inv-return-time" value="14:35">
               </div>

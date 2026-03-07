@@ -84,6 +84,8 @@ async function initInvoicePage() {
   }
 
   updateNavCarsCount();
+  // Load today's flights for the default return date
+  loadFlightsForDate(document.getElementById('inv-return-date').value);
 }
 
 async function newInvoice() {
@@ -100,7 +102,6 @@ async function newInvoice() {
   document.getElementById('inv-id').value = '';
   document.getElementById('inv-customer-id').value = '';
   document.getElementById('inv-rego').value = '';
-  document.getElementById('inv-make').value = '';
   document.getElementById('inv-last-name').value = '';
   document.getElementById('inv-first-name').value = '';
   document.getElementById('inv-phone').value = '';
@@ -159,7 +160,6 @@ async function loadInvoice(invoiceNumber, invoiceId) {
   document.getElementById('inv-number-display').textContent = inv.invoice_number;
   document.getElementById('inv-customer-id').value = inv.customer_id || '';
   document.getElementById('inv-rego').value = inv.rego || '';
-  document.getElementById('inv-make').value = inv.make || '';
   document.getElementById('inv-last-name').value = inv.last_name || '';
   document.getElementById('inv-first-name').value = inv.first_name || '';
   document.getElementById('inv-phone').value = inv.phone || '';
@@ -245,7 +245,6 @@ document.getElementById('inv-rego').addEventListener('blur', async () => {
 
   // Only populate fields that are currently empty
   const fill = (id, val) => { if (val && !document.getElementById(id).value) document.getElementById(id).value = val; };
-  fill('inv-make', inv.make);
   fill('inv-last-name', inv.last_name);
   fill('inv-first-name', inv.first_name);
   fill('inv-phone', inv.phone);
@@ -268,7 +267,10 @@ document.getElementById('inv-rego').addEventListener('keydown', (e) => {
 
 // ─── Event listeners ──────────────────────────────────────────────────────────
 document.getElementById('inv-date-in').addEventListener('change', updateNightsAndDisplay);
-document.getElementById('inv-return-date').addEventListener('change', updateNightsAndDisplay);
+document.getElementById('inv-return-date').addEventListener('change', () => {
+  updateNightsAndDisplay();
+  loadFlightsForDate(document.getElementById('inv-return-date').value);
+});
 document.getElementById('inv-time-in').addEventListener('change', updateNightsAndDisplay);
 
 document.getElementById('btn-prev-date').addEventListener('click', () => {
@@ -294,7 +296,36 @@ document.getElementById('inv-no-key').addEventListener('change', (e) => {
   if (e.target.checked) document.getElementById('inv-key-number').value = '';
 });
 
-// ─── Flight arrival time selector → Return Time ───────────────────────────────
+// ─── Flight arrival dropdown – populated from /api/flights/arrivals ───────────
+async function loadFlightsForDate(dateStr) {
+  const sel = document.getElementById('inv-flight-arrival-select');
+  try {
+    const date = dateStr || document.getElementById('inv-return-date').value || new Date().toISOString().split('T')[0];
+    const res = await fetch(`/api/flights/arrivals?date=${date}`);
+    if (!res.ok) throw new Error('fetch failed');
+    const data = await res.json();
+
+    // Day name for the label
+    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const dayName = days[data.dayOfWeek] || '';
+
+    sel.innerHTML = `<option value="">✈ ${dayName} flights (BOI/KKE)</option>`;
+    (data.flights || []).forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f.time;
+      opt.textContent = `${f.time} – ${f.label} (${f.flight})`;
+      sel.appendChild(opt);
+    });
+  } catch (_) {
+    sel.innerHTML = `<option value="">✈ Flights (BOI/KKE)</option>
+      <option value="08:45">08:45 – Morning (NZ8391)</option>
+      <option value="11:45">11:45 – Midday (NZ8393)</option>
+      <option value="14:35">14:35 – Afternoon (NZ8395)</option>
+      <option value="16:35">16:35 – Late afternoon (NZ8397)</option>
+      <option value="19:00">19:00 – Evening (NZ8399)</option>`;
+  }
+}
+
 // When a flight arrival is selected, copy the time into the Return Time field
 document.getElementById('inv-flight-arrival-select').addEventListener('change', (e) => {
   if (e.target.value) {
@@ -477,7 +508,6 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
     key_number: document.getElementById('inv-no-key').checked ? null : (document.getElementById('inv-key-number').value || null),
     no_key: document.getElementById('inv-no-key').checked,
     rego: document.getElementById('inv-rego').value,
-    make: document.getElementById('inv-make').value,
     first_name: document.getElementById('inv-first-name').value,
     last_name: document.getElementById('inv-last-name').value,
     phone: document.getElementById('inv-phone').value,
@@ -530,7 +560,9 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
       currentInvoiceId = inv.id;
       document.getElementById('inv-id').value = inv.id;
       document.getElementById('inv-status-badge').innerHTML = `<span class="badge bg-success">SAVED</span>`;
-      document.getElementById('save-btn-text').textContent = 'UPDATE INVOICE';
+      // NOTE: do NOT touch save-btn-text here – the spinner already replaced
+      // the button innerHTML so that span no longer exists.  The btn.innerHTML
+      // line AFTER this try/catch restores the full button (including the span).
       document.getElementById('btn-print-receipt').disabled = false;
       document.getElementById('btn-email-receipt').disabled = false;
       document.getElementById('btn-void-invoice').disabled = false;
