@@ -31,7 +31,7 @@
         <div class="key-item in-use" style="width:40px; height:30px; display:flex; align-items:center; justify-content:center;">K</div>
         <span class="small">In Use</span>
       </div>
-      <div class="small text-muted ms-auto">Click an in-use key to view invoice details</div>
+      <div class="small text-muted ms-auto"><i class="bi bi-cursor-fill me-1"></i>Click an in-use key to open the booking</div>
     </div>
 
     <div id="key-grid" class="key-grid">
@@ -104,12 +104,18 @@
         </div>
       `).join('');
 
-      // Attach click on in-use keys
+      // Clicking an in-use key goes straight to its invoice
       document.querySelectorAll('.key-item.in-use').forEach(el => {
+        el.style.cursor = 'pointer';
         el.addEventListener('click', () => {
           try {
             const k = JSON.parse(el.dataset.key.replace(/&#39;/g, "'"));
-            showKeyDetail(k);
+            if (k.invoice_id) {
+              window.location.href = `/invoice.html?id=${k.invoice_id}`;
+            } else {
+              // No linked invoice — fall back to detail modal
+              showKeyDetail(k);
+            }
           } catch(e) {}
         });
       });
