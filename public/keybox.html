@@ -96,29 +96,20 @@
       document.getElementById('inuse-count').textContent = `${data.inUse} In Use`;
 
       const grid = document.getElementById('key-grid');
-      grid.innerHTML = data.keys.map(k => `
-        <div class="key-item ${k.status}" data-key='${JSON.stringify(k).replace(/'/g, "&#39;")}' 
-             title="${k.status === 'in_use' ? `In use: ${k.first_name||''} ${k.last_name||''} - ${k.rego||''}` : 'Available'}">
-          <span class="key-num">${k.key_number}</span>
-          ${k.status === 'in_use' ? `<span class="key-name">${(k.last_name||'').substring(0,8) || 'In Use'}</span>` : `<span class="key-name text-muted">Free</span>`}
-        </div>
-      `).join('');
-
-      // Clicking an in-use key goes straight to its invoice
-      document.querySelectorAll('.key-item.in-use').forEach(el => {
-        el.style.cursor = 'pointer';
-        el.addEventListener('click', () => {
-          try {
-            const k = JSON.parse(el.dataset.key.replace(/&#39;/g, "'"));
-            if (k.invoice_id) {
-              window.location.href = `/invoice.html?id=${k.invoice_id}`;
-            } else {
-              // No linked invoice — fall back to detail modal
-              showKeyDetail(k);
-            }
-          } catch(e) {}
-        });
-      });
+      // Use 'in-use' (hyphen) so it matches the CSS selector and event delegation below
+      grid.innerHTML = data.keys.map(k => {
+        const cssClass = k.status === 'in_use' ? 'in-use' : 'available';
+        const safeData = JSON.stringify(k).replace(/'/g, "&#39;");
+        const titleTxt = k.status === 'in_use'
+          ? `Click to open booking — ${k.first_name||''} ${k.last_name||''} (${k.rego||''})`
+          : 'Available';
+        const nameTxt = k.status === 'in_use'
+          ? `<span class="key-name">${(k.last_name||'').substring(0,8) || 'In Use'}</span>`
+          : `<span class="key-name text-muted">Free</span>`;
+        return `<div class="key-item ${cssClass}" data-key='${safeData}' title="${titleTxt}">
+          <span class="key-num">${k.key_number}</span>${nameTxt}
+        </div>`;
+      }).join('');
     }
 
     function showKeyDetail(k) {
@@ -144,6 +135,20 @@
 
       new bootstrap.Modal('#keyModal').show();
     }
+
+    // ── Event delegation: one listener handles all key clicks, even after grid refresh ──
+    document.getElementById('key-grid').addEventListener('click', (e) => {
+      const keyEl = e.target.closest('.key-item.in-use');
+      if (!keyEl) return;
+      try {
+        const k = JSON.parse(keyEl.dataset.key.replace(/&#39;/g, "'"));
+        if (k.invoice_id) {
+          window.location.href = `/invoice.html?id=${k.invoice_id}`;
+        } else {
+          showKeyDetail(k); // fall-back: key in-use but no linked invoice
+        }
+      } catch (err) { console.error('Key click error:', err); }
+    });
 
     document.getElementById('btn-release-key').addEventListener('click', async () => {
       if (!currentKey) return;

@@ -136,7 +136,7 @@ router.post('/', requireAuth, async (req, res) => {
 
     if (key_number && !no_key) {
       await db.prepare("UPDATE key_box SET status = 'in_use', invoice_id = ? WHERE carpark_id = ? AND key_number = ?")
-        .run(result.lastInsertRowid, carparkId, key_number);
+        .run(result.lastInsertRowid, carparkId, parseInt(key_number));
     }
 
     const newInvoice = await db.prepare('SELECT * FROM invoices WHERE id = ?').get(result.lastInsertRowid);
@@ -188,7 +188,7 @@ router.put('/:id', requireAuth, async (req, res) => {
 
     if (key_number && !no_key) {
       await db.prepare("UPDATE key_box SET status = 'in_use', invoice_id = ? WHERE carpark_id = ? AND key_number = ?")
-        .run(id, carparkId, key_number);
+        .run(id, carparkId, parseInt(key_number));
     }
 
     const updated = await db.prepare('SELECT * FROM invoices WHERE id = ?').get(id);
@@ -206,7 +206,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
     // Release key so it becomes available again
     if (invoice.key_number && !invoice.no_key) {
       await db.prepare("UPDATE key_box SET status = 'available', invoice_id = NULL WHERE carpark_id = ? AND key_number = ?")
-        .run(carparkId, invoice.key_number);
+        .run(carparkId, parseInt(invoice.key_number));
     }
     await db.prepare('DELETE FROM invoices WHERE id = ?').run(id);
     res.json({ success: true });
@@ -223,7 +223,7 @@ router.post('/:id/void', requireAuth, async (req, res) => {
     await db.prepare("UPDATE invoices SET void = 1, picked_up = 'Voided', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
     if (invoice.key_number) {
       await db.prepare("UPDATE key_box SET status = 'available', invoice_id = NULL WHERE carpark_id = ? AND key_number = ?")
-        .run(carparkId, invoice.key_number);
+        .run(carparkId, parseInt(invoice.key_number));
     }
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
