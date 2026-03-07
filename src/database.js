@@ -3,16 +3,18 @@
  *
  * Unified async database layer.
  *
- * ┌─────────────────────────────────────────────────────┐
- * │  Environment        │ Backend                       │
- * │─────────────────────┼───────────────────────────────│
- * │  TURSO_DATABASE_URL │ @libsql/client  (Turso cloud) │
- * │  (not set)          │ sql.js  (local /tmp SQLite)   │
- * └─────────────────────┴───────────────────────────────┘
- *
- * Exported `db` object API (all async):
- *   db.prepare(sql)  → { get(...args), all(...args), run(...args) }
- *   db.exec(sql)     → Promise<void>
+ * ┌──────────────────────────────┬────────────────────────────────────────┐
+ * │  Environment variable(s)     │ Backend / persistence                  │
+ * ├──────────────────────────────┼────────────────────────────────────────┤
+ * │  TURSO_DATABASE_URL +        │ @libsql/client – Turso hosted SQLite   │
+ * │  TURSO_AUTH_TOKEN            │ (best option, permanent persistence)   │
+ * ├──────────────────────────────┼────────────────────────────────────────┤
+ * │  BLOB_READ_WRITE_TOKEN       │ sql.js + Vercel Blob                   │
+ * │  (Vercel Storage → Blob)     │ DB saved to Vercel Blob after writes;  │
+ * │                              │ restored on each cold start            │
+ * ├──────────────────────────────┼────────────────────────────────────────┤
+ * │  (neither set)               │ sql.js – local /tmp only (dev mode)    │
+ * └──────────────────────────────┴────────────────────────────────────────┘
  *
  * Route handlers must `await` every db call:
  *   const row  = await db.prepare('SELECT...').get(p1, p2);
@@ -27,6 +29,53 @@ const fs     = require('fs');
 
 // ─── Backend selection ────────────────────────────────────────────────────────
 const USE_TURSO = !!(process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN);
+const USE_BLOB  = !USE_TURSO && !!process.env.BLOB_READ_WRITE_TOKEN;
+const BLOB_DB_PATHNAME = 'carpark-db/carpark.db'; // stable key inside the blob store
+
+// Debounced blob-save: coalesces rapid writes into a single upload ~2 s later
+let _blobSaveTimer = null;
+function scheduleBlobSave() {
+  if (!USE_BLOB) return;
+  if (_blobSaveTimer) clearTimeout(_blobSaveTimer);
+  _blobSaveTimer = setTimeout(() => {
+    _blobSaveTimer = null;
+    _saveToBlobNow().catch(e => console.error('Blob save error:', e.message));
+  }, 2000);
+}
+
+async function _loadFromBlob() {
+  try {
+    const { list } = require('@vercel/blob');
+    const { blobs } = await list({ prefix: BLOB_DB_PATHNAME, token: process.env.BLOB_READ_WRITE_TOKEN });
+    const found = blobs.find(b => b.pathname === BLOB_DB_PATHNAME);
+    if (!found) { console.log('No blob DB found — starting fresh.'); return false; }
+    const resp = await fetch(found.url);
+    if (!resp.ok) throw new Error(`Blob fetch status ${resp.status}`);
+    const buf = Buffer.from(await resp.arrayBuffer());
+    fs.writeFileSync(DB_PATH, buf);
+    console.log(`Blob DB loaded (${buf.length} bytes)`);
+    return true;
+  } catch (e) {
+    console.error('Blob load error:', e.message);
+    return false;
+  }
+}
+
+async function _saveToBlobNow() {
+  if (!_db) return;
+  try {
+    const { put } = require('@vercel/blob');
+    const data = _db.export();
+    await put(BLOB_DB_PATHNAME, Buffer.from(data), {
+      access: 'public',
+      addRandomSuffix: false,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+      contentType: 'application/octet-stream',
+    });
+  } catch (e) {
+    console.error('Blob upload error:', e.message);
+  }
+}
 
 // ─── Local sql.js state ───────────────────────────────────────────────────────
 let _SQL = null;   // sql.js constructor (WASM)
@@ -85,6 +134,7 @@ function sqlJsWrap(sql) {
         const lastInsertRowid = _db.exec('SELECT last_insert_rowid()')[0].values[0][0];
         const changes         = _db.exec('SELECT changes()')[0].values[0][0];
         saveToDisk();
+        scheduleBlobSave(); // queue blob upload if BLOB_READ_WRITE_TOKEN is set
         return { lastInsertRowid, changes };
       } finally { stmt.free(); }
     }
@@ -195,21 +245,33 @@ async function initializeDatabase() {
       console.log('Using Turso hosted SQLite database');
     }
   } else {
-    // ── sql.js path ───────────────────────────────────────────────────────────
+    // ── sql.js path (local dev OR Vercel + Blob) ─────────────────────────────
     if (!_SQL) {
       const initSqlJs = require('sql.js');
       const wasmDir = path.dirname(require.resolve('sql.js/dist/sql-wasm.js'));
       _SQL = await initSqlJs({ locateFile: f => path.join(wasmDir, f) });
     }
     if (!_db) {
+      // If Vercel Blob is configured, try to restore from the blob first.
+      if (USE_BLOB) {
+        console.log('Vercel Blob configured – attempting to restore DB from blob…');
+        await _loadFromBlob(); // writes to DB_PATH if found
+      }
       _db = fs.existsSync(DB_PATH)
         ? new _SQL.Database(fs.readFileSync(DB_PATH))
         : new _SQL.Database();
     }
     setInterval(saveToDisk, 10000);
-    process.on('exit', saveToDisk);
+    // Also periodically push to blob (belt-and-suspenders alongside debounced saves)
+    if (USE_BLOB) {
+      setInterval(() => _saveToBlobNow().catch(() => {}), 30000);
+    }
+    process.on('exit', () => {
+      saveToDisk();
+      // Sync blob save on exit isn't possible (async), but disk save is enough
+    });
     process.on('SIGINT', () => { saveToDisk(); process.exit(); });
-    console.log('Using sql.js SQLite (local)');
+    console.log(USE_BLOB ? 'Using sql.js + Vercel Blob (persistent)' : 'Using sql.js SQLite (local)');
   }
 
   // ── Schema (CREATE TABLE IF NOT EXISTS – safe to run every cold start) ─────
@@ -525,8 +587,14 @@ async function initializeDatabase() {
     await db.prepare("UPDATE key_box SET status = 'in_use', invoice_id = 3 WHERE carpark_id = 1 AND key_number = 22").run();
   }
 
-  if (!USE_TURSO) saveToDisk();
-  console.log(`Database initialized (${USE_TURSO ? 'Turso' : 'sql.js'}).`);
+  if (!USE_TURSO) {
+    saveToDisk();
+    // If blob is active, push the freshly-seeded DB so future cold starts
+    // can restore it.
+    if (USE_BLOB) await _saveToBlobNow();
+  }
+  const mode = USE_TURSO ? 'Turso' : USE_BLOB ? 'sql.js + Vercel Blob' : 'sql.js (local)';
+  console.log(`Database initialized (${mode}).`);
 }
 
 module.exports = { db, initializeDatabase };
