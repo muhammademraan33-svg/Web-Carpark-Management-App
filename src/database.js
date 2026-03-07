@@ -617,4 +617,14 @@ async function initializeDatabase() {
   _initDone = true;
 }
 
-module.exports = { db, initializeDatabase };
+// Wipe the in-memory DB and re-run initializeDatabase so it picks up a clean slate.
+// Called by the admin /reset-db endpoint after blobs have been deleted.
+async function resetDatabase() {
+  _initDone = false;
+  _db = null;
+  _tursoClient = null;
+  // Clear the cached init promise in server.js by re-running full init
+  await initializeDatabase();
+}
+
+module.exports = { db, initializeDatabase, resetDatabase };

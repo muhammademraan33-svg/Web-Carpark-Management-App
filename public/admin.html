@@ -22,6 +22,7 @@
       <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-carpark">Carpark Settings</a></li>
       <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-pricing">Pricing Rules</a></li>
       <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-password">Change Password</a></li>
+      <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-system">System</a></li>
     </ul>
 
     <div class="tab-content bg-white rounded-bottom shadow-sm p-4">
@@ -95,6 +96,25 @@
         <div class="alert alert-info small mt-2">
           Pricing is calculated by matching the number of nights stayed to the first applicable rule (highest days_from first).
         </div>
+      </div>
+
+      <!-- System / Database -->
+      <div class="tab-pane fade" id="tab-system">
+        <h5 class="mb-3">System Status &amp; Database</h5>
+        <div class="mb-4">
+          <button class="btn btn-outline-secondary btn-sm" id="btn-check-status">
+            <i class="bi bi-activity me-1"></i> Check DB Status
+          </button>
+          <pre id="status-output" class="mt-2 p-3 bg-light rounded small" style="display:none;max-height:300px;overflow:auto;"></pre>
+        </div>
+        <hr>
+        <div class="alert alert-warning">
+          <strong>⚠️ Reset Database</strong> — deletes all blobs and re-seeds from scratch.
+          Use this only if data is corrupted or stuck. <strong>All bookings will be lost.</strong>
+        </div>
+        <button class="btn btn-danger" id="btn-reset-db">
+          <i class="bi bi-trash me-1"></i> Reset &amp; Re-seed Database
+        </button>
       </div>
 
       <!-- Change Password -->
@@ -411,6 +431,49 @@
       } else {
         const err = await res.json();
         showAlert(err.error || 'Error', 'danger');
+      }
+    });
+
+    // ── System tab ──────────────────────────────────────────────────────────────
+    document.getElementById('btn-check-status').addEventListener('click', async () => {
+      const btn = document.getElementById('btn-check-status');
+      const out = document.getElementById('status-output');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Checking…';
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        out.textContent = JSON.stringify(data, null, 2);
+        out.style.display = 'block';
+      } catch (e) {
+        out.textContent = 'Error: ' + e.message;
+        out.style.display = 'block';
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-activity me-1"></i> Check DB Status';
+    });
+
+    document.getElementById('btn-reset-db').addEventListener('click', async () => {
+      if (!confirm('⚠️ This will DELETE all bookings and reset to seed data.\nAre you absolutely sure?')) return;
+      if (!confirm('Second confirmation: ALL invoices will be lost. Continue?')) return;
+      const btn = document.getElementById('btn-reset-db');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Resetting…';
+      try {
+        const res = await fetch('/api/admin/reset-db', { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+          showAlert('Database reset successfully. Redirecting…', 'success');
+          setTimeout(() => { window.location.href = '/menu.html'; }, 2000);
+        } else {
+          showAlert('Reset failed: ' + (data.error || 'Unknown error'), 'danger');
+          btn.disabled = false;
+          btn.innerHTML = '<i class="bi bi-trash me-1"></i> Reset &amp; Re-seed Database';
+        }
+      } catch (e) {
+        showAlert('Error: ' + e.message, 'danger');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-trash me-1"></i> Reset &amp; Re-seed Database';
       }
     });
 
