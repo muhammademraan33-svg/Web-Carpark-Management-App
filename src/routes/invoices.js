@@ -196,6 +196,23 @@ router.put('/:id', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// DELETE /api/invoices/:id  – permanently removes the booking
+router.delete('/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const carparkId = req.session.carparkId || 1;
+    const invoice = await db.prepare('SELECT * FROM invoices WHERE id = ? AND carpark_id = ?').get(id, carparkId);
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+    // Release key so it becomes available again
+    if (invoice.key_number && !invoice.no_key) {
+      await db.prepare("UPDATE key_box SET status = 'available', invoice_id = NULL WHERE carpark_id = ? AND key_number = ?")
+        .run(carparkId, invoice.key_number);
+    }
+    await db.prepare('DELETE FROM invoices WHERE id = ?').run(id);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // POST /api/invoices/:id/void
 router.post('/:id/void', requireAuth, async (req, res) => {
   try {

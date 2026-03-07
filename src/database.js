@@ -30,7 +30,11 @@ const fs     = require('fs');
 // ─── Backend selection ────────────────────────────────────────────────────────
 const USE_TURSO = !!(process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN);
 const USE_BLOB  = !USE_TURSO && !!process.env.BLOB_READ_WRITE_TOKEN;
-const BLOB_DB_PATHNAME = 'carpark-db/carpark.db'; // stable key inside the blob store
+// Using a prefix + addRandomSuffix:true so every upload gets a unique URL.
+// This completely avoids Vercel CDN stale-cache issues (same-pathname overwrites
+// can take up to ~60 s to invalidate at the edge).  We find the latest DB by
+// sorting the blob list on uploadedAt timestamp.
+const BLOB_DB_PREFIX = 'carpark-db/carpark-';
 
 // After initializeDatabase() completes we set this true so run() starts
 // uploading the DB to Vercel Blob on every write.  During the seeding phase
@@ -40,17 +44,23 @@ let _initDone = false;
 async function _loadFromBlob() {
   try {
     const { list } = require('@vercel/blob');
-    const { blobs } = await list({ prefix: BLOB_DB_PATHNAME, token: process.env.BLOB_READ_WRITE_TOKEN });
-    const found = blobs.find(b => b.pathname === BLOB_DB_PATHNAME);
-    if (!found) { console.log('No blob DB found — starting fresh.'); return false; }
-    const resp = await fetch(found.url);
+    const { blobs } = await list({ prefix: BLOB_DB_PREFIX, token: process.env.BLOB_READ_WRITE_TOKEN });
+    if (!blobs.length) {
+      console.log('[Blob] No DB blob found — starting fresh.');
+      return false;
+    }
+    // Sort newest-first and take the most recently uploaded copy
+    blobs.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
+    const latest = blobs[0];
+    console.log(`[Blob] Loading latest DB: ${latest.pathname} (${latest.uploadedAt})`);
+    const resp = await fetch(latest.url);
     if (!resp.ok) throw new Error(`Blob fetch status ${resp.status}`);
     const buf = Buffer.from(await resp.arrayBuffer());
     fs.writeFileSync(DB_PATH, buf);
-    console.log(`Blob DB loaded (${buf.length} bytes)`);
+    console.log(`[Blob] DB restored (${buf.length} bytes)`);
     return true;
   } catch (e) {
-    console.error('Blob load error:', e.message);
+    console.error('[Blob] Load error:', e.message);
     return false;
   }
 }
@@ -58,16 +68,31 @@ async function _loadFromBlob() {
 async function _saveToBlobNow() {
   if (!_db) return;
   try {
-    const { put } = require('@vercel/blob');
+    const { put, list, del } = require('@vercel/blob');
     const data = _db.export();
-    await put(BLOB_DB_PATHNAME, Buffer.from(data), {
+    // addRandomSuffix:true → unique URL per save → zero CDN stale-cache risk
+    const result = await put(`${BLOB_DB_PREFIX}db`, Buffer.from(data), {
       access: 'public',
-      addRandomSuffix: false,
+      addRandomSuffix: true,
       token: process.env.BLOB_READ_WRITE_TOKEN,
       contentType: 'application/octet-stream',
     });
+    console.log(`[Blob] Saved OK → ${result.url} (${data.length} bytes)`);
+    // Keep only the 3 most recent blobs to avoid storage accumulation
+    try {
+      const { blobs } = await list({ prefix: BLOB_DB_PREFIX, token: process.env.BLOB_READ_WRITE_TOKEN });
+      blobs.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
+      const toDelete = blobs.slice(3);
+      if (toDelete.length) {
+        await del(toDelete.map(b => b.url), { token: process.env.BLOB_READ_WRITE_TOKEN });
+        console.log(`[Blob] Cleaned up ${toDelete.length} old blob(s)`);
+      }
+    } catch (cleanupErr) {
+      console.warn('[Blob] Cleanup warning:', cleanupErr.message);
+    }
   } catch (e) {
-    console.error('Blob upload error:', e.message);
+    console.error('[Blob] SAVE FAILED:', e.message);
+    // Do NOT throw — the DB write succeeded; blob sync failure is non-fatal
   }
 }
 

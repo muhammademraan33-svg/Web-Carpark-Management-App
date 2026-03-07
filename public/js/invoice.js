@@ -141,6 +141,7 @@ async function newInvoice() {
   document.getElementById('btn-email-receipt').disabled = true;
   document.getElementById('btn-void-invoice').disabled = true;
   document.getElementById('btn-refund').disabled = true;
+  document.getElementById('btn-delete-invoice').disabled = true;
 }
 
 async function loadInvoice(invoiceNumber, invoiceId) {
@@ -222,6 +223,7 @@ async function loadInvoice(invoiceNumber, invoiceId) {
   document.getElementById('btn-email-receipt').disabled = false;
   document.getElementById('btn-void-invoice').disabled = !!inv.void;
   document.getElementById('btn-refund').disabled = false;
+  document.getElementById('btn-delete-invoice').disabled = false;
 }
 
 function updateNightsAndDisplay() {
@@ -573,11 +575,12 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
       // NOTE: do NOT touch save-btn-text here – the spinner already replaced
       // the button innerHTML so that span no longer exists.  The btn.innerHTML
       // line AFTER this try/catch restores the full button (including the span).
-      document.getElementById('btn-print-receipt').disabled = false;
-      document.getElementById('btn-email-receipt').disabled = false;
-      document.getElementById('btn-void-invoice').disabled = false;
-      document.getElementById('btn-refund').disabled = false;
-      showAlert('Invoice saved successfully!', 'success');
+  document.getElementById('btn-print-receipt').disabled = false;
+  document.getElementById('btn-email-receipt').disabled = false;
+  document.getElementById('btn-void-invoice').disabled = false;
+  document.getElementById('btn-refund').disabled = false;
+  document.getElementById('btn-delete-invoice').disabled = false;
+  showAlert('Invoice saved successfully!', 'success');
       history.replaceState(null, '', `/invoice.html?id=${inv.id}`);
 
       // Save customer if new
@@ -655,6 +658,35 @@ document.getElementById('btn-void-invoice').addEventListener('click', async () =
     document.getElementById('btn-void-invoice').disabled = true;
     updateNavCarsCount();
   }
+});
+
+// Delete booking (permanent)
+document.getElementById('btn-delete-invoice').addEventListener('click', async () => {
+  if (!currentInvoiceId) return;
+  const invNum = document.getElementById('inv-number-display').textContent;
+  if (!confirm(`⚠️ PERMANENTLY DELETE Invoice #${invNum}?\n\nThis will remove the booking from the system and release the key.\nThis CANNOT be undone.`)) return;
+
+  const btn = document.getElementById('btn-delete-invoice');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Deleting…';
+
+  try {
+    const res = await fetch(`/api/invoices/${currentInvoiceId}`, { method: 'DELETE' });
+    if (res.ok) {
+      showAlert(`Invoice #${invNum} deleted successfully.`, 'success');
+      setTimeout(() => { window.location.href = '/invoice.html'; }, 1500);
+    } else {
+      const err = await res.json();
+      showAlert('Failed to delete: ' + (err.error || 'Unknown error'), 'danger');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-trash me-1"></i> Delete';
+    }
+  } catch (err) {
+    showAlert('Error deleting invoice: ' + err.message, 'danger');
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-trash me-1"></i> Delete';
+  }
+  updateNavCarsCount();
 });
 
 // Refund
