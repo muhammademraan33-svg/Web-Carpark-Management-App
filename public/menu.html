@@ -242,8 +242,12 @@
     }
 
     loadMenuData();
-    // Refresh every 2 minutes
-    setInterval(loadMenuData, 120000);
+    // Refresh every 30 seconds so the count stays live
+    setInterval(loadMenuData, 30000);
+    // Also refresh immediately whenever the user comes back to this tab
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') loadMenuData();
+    });
   </script>
 </body>
 </html>
