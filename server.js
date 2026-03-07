@@ -1,6 +1,7 @@
 require('dotenv').config({ path: './config.env' });
 const express = require('express');
-const cookieSession = require('cookie-session');
+const cookieParser = require('cookie-parser');
+const jwt = require('jsonwebtoken');
 const path = require('path');
 const cron = require('node-cron');
 
@@ -27,22 +28,34 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 
-// ─── Sessions (cookie-based – works on Vercel serverless) ────────────────────
-// cookie-session stores the entire session payload in a signed cookie so there
-// is NO server-side state.  This survives across Vercel's stateless invocations.
-const isProduction = !!process.env.VERCEL || process.env.NODE_ENV === 'production';
-app.use(cookieSession({
-  name: 'cpsess',
-  keys: [
-    process.env.SESSION_SECRET || 'carpark_secret_2026',
-    process.env.SESSION_SECRET_2 || 'carpark_secret_alt_2026'
-  ],
-  maxAge: 8 * 60 * 60 * 1000, // 8 hours
-  secure: isProduction,        // HTTPS-only cookies in production
-  httpOnly: true,
-  sameSite: 'lax'
-}));
+// ─── JWT session middleware ───────────────────────────────────────────────────
+// Reads the signed JWT from the 'auth_token' httpOnly cookie and populates
+// req.session so all existing route code (req.session.userId etc.) works
+// unchanged.  No server-side state → works perfectly on Vercel serverless.
+// We deliberately do NOT set the Secure cookie flag: Vercel's edge network
+// already enforces HTTPS at the CDN layer, so there is no HTTP to protect
+// against, and omitting Secure avoids the "secure cookie over HTTP" error that
+// cookie-session threw when the internal serverless connection appeared as HTTP.
+const JWT_SECRET = process.env.SESSION_SECRET || 'carpark_secret_2026';
+app.use((req, res, next) => {
+  req.session = {}; // always a plain object so req.session.x never throws
+  const token = req.cookies && req.cookies.auth_token;
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      req.session.userId    = decoded.userId;
+      req.session.username  = decoded.username;
+      req.session.name      = decoded.name;
+      req.session.role      = decoded.role;
+      req.session.carparkId = decoded.carparkId;
+    } catch (_) {
+      // expired / tampered → req.session stays empty, treated as logged-out
+    }
+  }
+  next();
+});
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));

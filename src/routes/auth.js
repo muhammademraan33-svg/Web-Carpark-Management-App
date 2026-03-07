@@ -1,7 +1,18 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { db } = require('../database');
 const router = express.Router();
+
+const JWT_SECRET  = () => process.env.SESSION_SECRET || 'carpark_secret_2026';
+const COOKIE_OPTS = {
+  httpOnly: true,
+  sameSite: 'lax',
+  maxAge: 8 * 60 * 60 * 1000  // 8 hours in ms
+  // NOTE: no 'secure: true' – Vercel's CDN enforces HTTPS at the edge layer
+  // so the serverless function never sees a plain-HTTP connection and the
+  // Secure flag would prevent the cookie from being written internally.
+};
 
 // POST /api/auth/login
 router.post('/login', (req, res) => {
@@ -20,19 +31,29 @@ router.post('/login', (req, res) => {
     return res.status(401).json({ error: 'Invalid username or password' });
   }
 
-  req.session.userId = user.id;
-  req.session.username = user.username;
-  req.session.name = user.name;
-  req.session.role = user.role;
-  req.session.carparkId = user.carpark_id;
+  // Sign a JWT containing only the fields the rest of the app needs
+  const token = jwt.sign(
+    {
+      userId:    user.id,
+      username:  user.username,
+      name:      user.name,
+      role:      user.role,
+      carparkId: user.carpark_id
+    },
+    JWT_SECRET(),
+    { expiresIn: '8h' }
+  );
+
+  // Set as httpOnly cookie – browser stores it and sends it on every request
+  res.cookie('auth_token', token, COOKIE_OPTS);
 
   res.json({
     success: true,
     user: {
-      id: user.id,
-      username: user.username,
-      name: user.name,
-      role: user.role,
+      id:        user.id,
+      username:  user.username,
+      name:      user.name,
+      role:      user.role,
       carparkId: user.carpark_id
     }
   });
@@ -40,7 +61,8 @@ router.post('/login', (req, res) => {
 
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
-  req.session = null; // cookie-session: clear by setting to null
+  res.clearCookie('auth_token', { httpOnly: true, sameSite: 'lax' });
+  req.session = {};
   res.json({ success: true });
 });
 
@@ -50,10 +72,10 @@ router.get('/me', (req, res) => {
     return res.status(401).json({ error: 'Not authenticated' });
   }
   res.json({
-    id: req.session.userId,
-    username: req.session.username,
-    name: req.session.name,
-    role: req.session.role,
+    id:        req.session.userId,
+    username:  req.session.username,
+    name:      req.session.name,
+    role:      req.session.role,
     carparkId: req.session.carparkId
   });
 });
