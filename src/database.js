@@ -32,16 +32,10 @@ const USE_TURSO = !!(process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TO
 const USE_BLOB  = !USE_TURSO && !!process.env.BLOB_READ_WRITE_TOKEN;
 const BLOB_DB_PATHNAME = 'carpark-db/carpark.db'; // stable key inside the blob store
 
-// Debounced blob-save: coalesces rapid writes into a single upload ~2 s later
-let _blobSaveTimer = null;
-function scheduleBlobSave() {
-  if (!USE_BLOB) return;
-  if (_blobSaveTimer) clearTimeout(_blobSaveTimer);
-  _blobSaveTimer = setTimeout(() => {
-    _blobSaveTimer = null;
-    _saveToBlobNow().catch(e => console.error('Blob save error:', e.message));
-  }, 2000);
-}
+// After initializeDatabase() completes we set this true so run() starts
+// uploading the DB to Vercel Blob on every write.  During the seeding phase
+// we skip per-write uploads and do one final upload at the end of init.
+let _initDone = false;
 
 async function _loadFromBlob() {
   try {
@@ -134,7 +128,10 @@ function sqlJsWrap(sql) {
         const lastInsertRowid = _db.exec('SELECT last_insert_rowid()')[0].values[0][0];
         const changes         = _db.exec('SELECT changes()')[0].values[0][0];
         saveToDisk();
-        scheduleBlobSave(); // queue blob upload if BLOB_READ_WRITE_TOKEN is set
+        // On Vercel the container is frozen right after the HTTP response is
+        // sent, so setTimeout-based saves never fire.  We must await the blob
+        // upload within the current request (after initialisation is done).
+        if (USE_BLOB && _initDone) await _saveToBlobNow();
         return { lastInsertRowid, changes };
       } finally { stmt.free(); }
     }
@@ -262,10 +259,6 @@ async function initializeDatabase() {
         : new _SQL.Database();
     }
     setInterval(saveToDisk, 10000);
-    // Also periodically push to blob (belt-and-suspenders alongside debounced saves)
-    if (USE_BLOB) {
-      setInterval(() => _saveToBlobNow().catch(() => {}), 30000);
-    }
     process.on('exit', () => {
       saveToDisk();
       // Sync blob save on exit isn't possible (async), but disk save is enough
@@ -595,6 +588,8 @@ async function initializeDatabase() {
   }
   const mode = USE_TURSO ? 'Turso' : USE_BLOB ? 'sql.js + Vercel Blob' : 'sql.js (local)';
   console.log(`Database initialized (${mode}).`);
+  // From this point every run() call will synchronously upload to Vercel Blob.
+  _initDone = true;
 }
 
 module.exports = { db, initializeDatabase };

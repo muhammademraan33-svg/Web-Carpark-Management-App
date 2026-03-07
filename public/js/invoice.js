@@ -4,6 +4,7 @@ document.getElementById('navbar-container').innerHTML = renderNavbar('invoice');
 let currentInvoiceId = null;
 let staffList = [];
 let accountCustomers = [];
+let _saving = false; // guard against concurrent saves / race conditions
 
 // ─── Customer alert helpers (robust if elements missing) ──────────────────────
 function getCustomerAlertElement() {
@@ -134,7 +135,8 @@ async function newInvoice() {
 
   updateNightsAndDisplay();
   document.getElementById('inv-status-badge').innerHTML = `<span class="badge bg-warning text-dark">UNSAVED</span>`;
-  document.getElementById('save-btn-text').textContent = 'SAVE INVOICE';
+  const _sbt = document.getElementById('save-btn-text');
+  if (_sbt) _sbt.textContent = 'SAVE INVOICE';
   document.getElementById('btn-print-receipt').disabled = true;
   document.getElementById('btn-email-receipt').disabled = true;
   document.getElementById('btn-void-invoice').disabled = true;
@@ -214,7 +216,8 @@ async function loadInvoice(invoiceNumber, invoiceId) {
   document.getElementById('inv-status-badge').innerHTML = inv.void
     ? `<span class="badge bg-secondary">VOIDED</span>`
     : `<span class="badge bg-success">SAVED</span>`;
-  document.getElementById('save-btn-text').textContent = 'UPDATE INVOICE';
+  const _sbt2 = document.getElementById('save-btn-text');
+  if (_sbt2) _sbt2.textContent = 'UPDATE INVOICE';
   document.getElementById('btn-print-receipt').disabled = false;
   document.getElementById('btn-email-receipt').disabled = false;
   document.getElementById('btn-void-invoice').disabled = !!inv.void;
@@ -495,6 +498,8 @@ document.getElementById('btn-save-alert').addEventListener('click', () => {
 // Save invoice form
 document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (_saving) return; // prevent double-submit / race condition
+
   const invNum = document.getElementById('inv-number-display').textContent;
   if (!invNum || invNum === 'NEW') {
     showAlert('Invoice number not set', 'danger');
@@ -532,9 +537,14 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
     customer_alert: getCustomerAlertText() || null
   };
 
-  const btn = document.getElementById('btn-save');
-  btn.disabled = true;
+  _saving = true;
+  const btn     = document.getElementById('btn-save');
+  const btnNew  = document.getElementById('btn-new-invoice');
+  const btnLoad = document.getElementById('btn-load-invoice');
+  btn.disabled  = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
+  if (btnNew)  btnNew.disabled  = true;
+  if (btnLoad) btnLoad.disabled = true;
 
   try {
     let res;
@@ -592,8 +602,11 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
     showAlert('Error saving invoice: ' + err.message, 'danger');
   }
 
-  btn.disabled = false;
+  _saving = false;
+  btn.disabled  = false;
   btn.innerHTML = `<i class="bi bi-floppy me-2"></i><span id="save-btn-text">UPDATE INVOICE</span>`;
+  if (btnNew)  btnNew.disabled  = false;
+  if (btnLoad) btnLoad.disabled = false;
   updateNavCarsCount();
 });
 
