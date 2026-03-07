@@ -152,6 +152,96 @@ router.get('/logs', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// POST /api/email/receipt/:invoiceId  – send an individual invoice receipt
+router.post('/receipt/:invoiceId', requireAuth, async (req, res) => {
+  const { invoiceId } = req.params;
+  const carparkId = req.session.carparkId || 1;
+  try {
+    const invoice = await db.prepare('SELECT * FROM invoices WHERE id = ? AND carpark_id = ?').get(invoiceId, carparkId);
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+
+    const emailTo = invoice.email;
+    if (!emailTo) return res.status(400).json({ error: 'No email address on this invoice' });
+
+    const carpark = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(carparkId);
+
+    const fmt = (d) => d ? new Date(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
+    const currency = (n) => `$${parseFloat(n || 0).toFixed(2)}`;
+
+    const paymentRows = `
+      <tr><td style="padding:6px 10px;border-bottom:1px solid #eee;"><strong>Payment</strong></td>
+          <td style="padding:6px 10px;border-bottom:1px solid #eee;">${invoice.paid_status || '—'}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right;">${currency(invoice.payment_amount)}</td></tr>
+      ${invoice.payment_amount_2 > 0 ? `
+      <tr><td style="padding:6px 10px;border-bottom:1px solid #eee;"><strong>2nd Payment</strong></td>
+          <td style="padding:6px 10px;border-bottom:1px solid #eee;">${invoice.paid_status_2 || '—'}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right;">${currency(invoice.payment_amount_2)}</td></tr>` : ''}
+    `;
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;padding:20px;color:#333;">
+  <div style="background:#2c3e50;color:#fff;padding:20px;border-radius:8px 8px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:22px;">${carpark ? carpark.name : 'Car Storage Yard'}</h1>
+    <p style="margin:4px 0 0;font-size:13px;opacity:.8;">${carpark ? carpark.address || '' : ''}</p>
+  </div>
+  <div style="background:#f8f9fa;border:1px solid #dee2e6;border-top:none;padding:20px;border-radius:0 0 8px 8px;">
+    <h2 style="color:#2c3e50;margin-top:0;">Receipt / Invoice #${invoice.invoice_number}</h2>
+
+    <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
+      <tr><td style="padding:5px 0;width:140px;color:#666;">Customer</td>
+          <td style="padding:5px 0;font-weight:bold;">${invoice.first_name || ''} ${invoice.last_name || ''}</td></tr>
+      <tr><td style="padding:5px 0;color:#666;">Vehicle Rego</td>
+          <td style="padding:5px 0;font-weight:bold;">${invoice.rego || '—'}</td></tr>
+      <tr><td style="padding:5px 0;color:#666;">Key #</td>
+          <td style="padding:5px 0;">${invoice.no_key ? 'No Key' : (invoice.key_number || '—')}</td></tr>
+      <tr><td style="padding:5px 0;color:#666;">Date In</td>
+          <td style="padding:5px 0;">${fmt(invoice.date_in)}${invoice.time_in ? ' at ' + invoice.time_in : ''}</td></tr>
+      <tr><td style="padding:5px 0;color:#666;">Return Date</td>
+          <td style="padding:5px 0;">${fmt(invoice.return_date)}${invoice.return_time ? ' at ' + invoice.return_time : ''}</td></tr>
+      <tr><td style="padding:5px 0;color:#666;">Stay</td>
+          <td style="padding:5px 0;">${invoice.stay_nights || 0} night(s)</td></tr>
+      ${invoice.flight_info ? `<tr><td style="padding:5px 0;color:#666;">Flight</td>
+          <td style="padding:5px 0;">${invoice.flight_info} (${invoice.flight_type || ''})</td></tr>` : ''}
+    </table>
+
+    <hr style="border:1px solid #dee2e6;margin:16px 0;">
+
+    <table style="width:100%;border-collapse:collapse;margin-bottom:12px;">
+      ${invoice.discount_percent > 0 ? `<tr><td style="padding:6px 10px;border-bottom:1px solid #eee;">Discount</td><td></td><td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right;color:#e74c3c;">-${invoice.discount_percent}%</td></tr>` : ''}
+      ${invoice.credit_applied > 0  ? `<tr><td style="padding:6px 10px;border-bottom:1px solid #eee;">Credit Applied</td><td></td><td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right;color:#3498db;">${currency(invoice.credit_applied)}</td></tr>` : ''}
+      <tr style="background:#f8f9fa;"><td style="padding:10px;font-size:16px;font-weight:bold;" colspan="2">TOTAL</td>
+          <td style="padding:10px;font-size:18px;font-weight:bold;color:#27ae60;text-align:right;">${currency(invoice.total_price)}</td></tr>
+    </table>
+
+    <table style="width:100%;border-collapse:collapse;">
+      ${paymentRows}
+    </table>
+
+    ${invoice.notes ? `<p style="margin-top:16px;padding:10px;background:#fff3cd;border-radius:4px;font-size:13px;"><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
+
+    <hr style="border:1px solid #dee2e6;margin:20px 0 10px;">
+    <p style="color:#7f8c8d;font-size:12px;text-align:center;margin:0;">
+      Thank you for choosing ${carpark ? carpark.name : 'our Car Storage Yard'}<br>
+      ${carpark ? carpark.phone || '' : ''}
+    </p>
+  </div>
+</body></html>`;
+
+    const transporter = getTransporter();
+    await transporter.sendMail({
+      from: emailFrom(),
+      to: emailTo,
+      subject: `Receipt – ${carpark ? carpark.name : 'Car Storage'} – Invoice #${invoice.invoice_number}`,
+      html,
+    });
+
+    res.json({ success: true, message: `Receipt sent to ${emailTo}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/email/test
 router.post('/test', requireAuth, async (req, res) => {
   const { email } = req.body;

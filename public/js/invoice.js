@@ -621,8 +621,26 @@ document.getElementById('btn-print-receipt').addEventListener('click', () => {
 document.getElementById('btn-email-receipt').addEventListener('click', async () => {
   if (!currentInvoiceId) return;
   const email = document.getElementById('inv-email').value;
-  if (!email) { showAlert('No email address for this customer', 'warning'); return; }
-  showAlert(`Receipt email would be sent to ${email}. Configure SMTP in config.env to enable.`, 'info');
+  if (!email) { showAlert('No email address on this invoice – please enter one and save first.', 'warning'); return; }
+
+  const btn = document.getElementById('btn-email-receipt');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sending…';
+
+  try {
+    const res = await fetch(`/api/email/receipt/${currentInvoiceId}`, { method: 'POST' });
+    const data = await res.json();
+    if (res.ok) {
+      showAlert(`✅ Receipt sent to ${email}`, 'success');
+    } else {
+      showAlert('Failed to send receipt: ' + (data.error || 'Unknown error'), 'danger');
+    }
+  } catch (err) {
+    showAlert('Error sending receipt: ' + err.message, 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-envelope me-1"></i> Email Receipt';
+  }
 });
 
 // Void invoice
