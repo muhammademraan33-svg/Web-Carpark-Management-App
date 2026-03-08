@@ -217,7 +217,7 @@ if (require.main === module) {
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`\n================================================`);
       console.log(`  BOI Car Storage - Carpark Management System`);
-      console.log(`  Running at: http://localhost:${PORT}`);
+      console.log(`  Running at: http://0.0.0.0:${PORT}`);
       console.log(`  Default login: admin / Admin@BOI2026!Secure`);
       console.log(`  Staff login:   staff / Staff@BOI2026!Secure`);
       console.log(`================================================\n`);
