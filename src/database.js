@@ -1,25 +1,15 @@
 /**
- * database.js
+ * database.js — sql.js SQLite (single backend, no external services)
  *
- * Unified async database layer.
+ * Data is kept in an sql.js in-memory database and flushed to a file:
+ *   • Local / Railway / Render  →  <project-root>/carpark.db
+ *   • Vercel (serverless)       →  /tmp/carpark.db  (persists within a
+ *                                   container, NOT across cold-starts)
  *
- * ┌──────────────────────────────┬────────────────────────────────────────┐
- * │  Environment variable(s)     │ Backend / persistence                  │
- * ├──────────────────────────────┼────────────────────────────────────────┤
- * │  TURSO_DATABASE_URL +        │ @libsql/client – Turso hosted SQLite   │
- * │  TURSO_AUTH_TOKEN            │ (best option, permanent persistence)   │
- * ├──────────────────────────────┼────────────────────────────────────────┤
- * │  BLOB_READ_WRITE_TOKEN       │ sql.js + Vercel Blob                   │
- * │  (Vercel Storage → Blob)     │ DB saved to Vercel Blob after writes;  │
- * │                              │ restored on each cold start            │
- * ├──────────────────────────────┼────────────────────────────────────────┤
- * │  (neither set)               │ sql.js – local /tmp only (dev mode)    │
- * └──────────────────────────────┴────────────────────────────────────────┘
- *
- * Route handlers must `await` every db call:
- *   const row  = await db.prepare('SELECT...').get(p1, p2);
- *   const rows = await db.prepare('SELECT...').all(p1);
- *   const r    = await db.prepare('INSERT...').run(p1, p2);
+ * All route handlers must await every db call:
+ *   const row  = await db.prepare('SELECT …').get(p1, p2);
+ *   const rows = await db.prepare('SELECT …').all(p1);
+ *   const r    = await db.prepare('INSERT …').run(p1, p2);
  *   // r.lastInsertRowid, r.changes
  */
 
@@ -27,96 +17,26 @@ const bcrypt = require('bcryptjs');
 const path   = require('path');
 const fs     = require('fs');
 
-// ─── Backend selection ────────────────────────────────────────────────────────
-const USE_TURSO = !!(process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN);
-const USE_BLOB  = !USE_TURSO && !!process.env.BLOB_READ_WRITE_TOKEN;
-// Using a prefix + addRandomSuffix:true so every upload gets a unique URL.
-// This completely avoids Vercel CDN stale-cache issues (same-pathname overwrites
-// can take up to ~60 s to invalidate at the edge).  We find the latest DB by
-// sorting the blob list on uploadedAt timestamp.
-const BLOB_DB_PREFIX = 'carpark-db/carpark-';
-
-// After initializeDatabase() completes we set this true so run() starts
-// uploading the DB to Vercel Blob on every write.  During the seeding phase
-// we skip per-write uploads and do one final upload at the end of init.
-let _initDone = false;
-
-async function _loadFromBlob() {
-  try {
-    const { list } = require('@vercel/blob');
-    const { blobs } = await list({ prefix: BLOB_DB_PREFIX, token: process.env.BLOB_READ_WRITE_TOKEN });
-    if (!blobs.length) {
-      console.log('[Blob] No DB blob found — starting fresh.');
-      return false;
-    }
-    // Sort newest-first and take the most recently uploaded copy
-    blobs.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
-    const latest = blobs[0];
-    console.log(`[Blob] Loading latest DB: ${latest.pathname} (${latest.uploadedAt})`);
-    const resp = await fetch(latest.url);
-    if (!resp.ok) throw new Error(`Blob fetch status ${resp.status}`);
-    const buf = Buffer.from(await resp.arrayBuffer());
-    fs.writeFileSync(DB_PATH, buf);
-    console.log(`[Blob] DB restored (${buf.length} bytes)`);
-    return true;
-  } catch (e) {
-    console.error('[Blob] Load error:', e.message);
-    return false;
-  }
-}
-
-async function _saveToBlobNow() {
-  if (!_db) return;
-  try {
-    const { put, list, del } = require('@vercel/blob');
-    const data = _db.export();
-    // addRandomSuffix:true → unique URL per save → zero CDN stale-cache risk
-    const result = await put(`${BLOB_DB_PREFIX}db`, Buffer.from(data), {
-      access: 'public',
-      addRandomSuffix: true,
-      token: process.env.BLOB_READ_WRITE_TOKEN,
-      contentType: 'application/octet-stream',
-    });
-    console.log(`[Blob] Saved OK → ${result.url} (${data.length} bytes)`);
-    // Keep only the 3 most recent blobs to avoid storage accumulation
-    try {
-      const { blobs } = await list({ prefix: BLOB_DB_PREFIX, token: process.env.BLOB_READ_WRITE_TOKEN });
-      blobs.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
-      const toDelete = blobs.slice(3);
-      if (toDelete.length) {
-        await del(toDelete.map(b => b.url), { token: process.env.BLOB_READ_WRITE_TOKEN });
-        console.log(`[Blob] Cleaned up ${toDelete.length} old blob(s)`);
-      }
-    } catch (cleanupErr) {
-      console.warn('[Blob] Cleanup warning:', cleanupErr.message);
-    }
-  } catch (e) {
-    console.error('[Blob] SAVE FAILED:', e.message);
-    // Do NOT throw — the DB write succeeded; blob sync failure is non-fatal
-  }
-}
-
-// ─── Local sql.js state ───────────────────────────────────────────────────────
-let _SQL = null;   // sql.js constructor (WASM)
-let _db  = null;   // sql.js Database instance
-let _tursoClient = null; // @libsql/client instance
+// ─── State ────────────────────────────────────────────────────────────────────
+let _SQL = null;  // sql.js WASM constructor
+let _db  = null;  // sql.js Database instance
 
 const DB_PATH = process.env.VERCEL
   ? '/tmp/carpark.db'
   : path.join(__dirname, '..', 'carpark.db');
 
-// ─── sql.js helpers ───────────────────────────────────────────────────────────
+// ─── Disk helpers ─────────────────────────────────────────────────────────────
 function saveToDisk() {
   if (!_db) return;
   try {
-    const data = _db.export();
-    fs.writeFileSync(DB_PATH, Buffer.from(data));
+    fs.writeFileSync(DB_PATH, Buffer.from(_db.export()));
   } catch (e) {
-    console.error('DB save error:', e.message);
+    console.error('[DB] save error:', e.message);
   }
 }
 
-function sqlJsNorm(args) {
+// ─── sql.js parameter normalisation ──────────────────────────────────────────
+function norm(args) {
   if (args.length === 0) return [];
   if (args.length === 1 && args[0] !== null && typeof args[0] === 'object' && !Array.isArray(args[0])) {
     const obj = {};
@@ -126,84 +46,34 @@ function sqlJsNorm(args) {
   return args.map(v => (v === undefined ? null : v));
 }
 
-function sqlJsWrap(sql) {
-  function makeStmt() { return _db.prepare(sql); }
-
+// ─── sql.js statement wrapper (async interface) ───────────────────────────────
+function wrap(sql) {
   return {
     async get(...args) {
-      const stmt = makeStmt();
+      const stmt = _db.prepare(sql);
       try {
-        stmt.bind(sqlJsNorm(args));
+        stmt.bind(norm(args));
         return stmt.step() ? stmt.getAsObject() : undefined;
       } finally { stmt.free(); }
     },
     async all(...args) {
-      const stmt = makeStmt();
+      const stmt = _db.prepare(sql);
       const rows = [];
       try {
-        stmt.bind(sqlJsNorm(args));
+        stmt.bind(norm(args));
         while (stmt.step()) rows.push(stmt.getAsObject());
         return rows;
       } finally { stmt.free(); }
     },
     async run(...args) {
-      const stmt = makeStmt();
+      const stmt = _db.prepare(sql);
       try {
-        stmt.run(sqlJsNorm(args));
+        stmt.run(norm(args));
         const lastInsertRowid = _db.exec('SELECT last_insert_rowid()')[0].values[0][0];
         const changes         = _db.exec('SELECT changes()')[0].values[0][0];
         saveToDisk();
-        // On Vercel the container is frozen right after the HTTP response is
-        // sent, so setTimeout-based saves never fire.  We must await the blob
-        // upload within the current request (after initialisation is done).
-        if (USE_BLOB && _initDone) await _saveToBlobNow();
         return { lastInsertRowid, changes };
       } finally { stmt.free(); }
-    }
-  };
-}
-
-// ─── Turso helpers ────────────────────────────────────────────────────────────
-function tursoNorm(args) {
-  // @libsql/client wants an array of primitives
-  if (args.length === 0) return [];
-  if (args.length === 1 && args[0] !== null && typeof args[0] === 'object' && !Array.isArray(args[0])) {
-    return Object.values(args[0]).map(v => (v === undefined ? null : v));
-  }
-  return args.map(v => (v === undefined ? null : v));
-}
-
-function tursoRowToObj(row, columns) {
-  const obj = {};
-  columns.forEach((col, i) => { obj[col] = row[i]; });
-  return obj;
-}
-
-function tursoWrap(sql) {
-  return {
-    async get(...args) {
-      const result = await _tursoClient.execute({ sql, args: tursoNorm(args) });
-      if (!result.rows || result.rows.length === 0) return undefined;
-      const cols = result.columns;
-      const row  = result.rows[0];
-      // rows can be objects already (client version dependent)
-      if (typeof row === 'object' && !Array.isArray(row)) return row;
-      return tursoRowToObj(row, cols);
-    },
-    async all(...args) {
-      const result = await _tursoClient.execute({ sql, args: tursoNorm(args) });
-      const cols = result.columns;
-      return (result.rows || []).map(row => {
-        if (typeof row === 'object' && !Array.isArray(row)) return row;
-        return tursoRowToObj(row, cols);
-      });
-    },
-    async run(...args) {
-      const result = await _tursoClient.execute({ sql, args: tursoNorm(args) });
-      return {
-        lastInsertRowid: result.lastInsertRowid ?? 0,
-        changes:         result.rowsAffected  ?? 0,
-      };
     }
   };
 }
@@ -211,33 +81,16 @@ function tursoWrap(sql) {
 // ─── Exported db proxy ────────────────────────────────────────────────────────
 const db = new Proxy({}, {
   get(_, prop) {
-    if (prop === 'prepare') {
-      return (sql) => USE_TURSO ? tursoWrap(sql) : sqlJsWrap(sql);
-    }
+    if (prop === 'prepare') return (sql) => wrap(sql);
+
     if (prop === 'exec') {
-      return async (sql) => {
-        if (USE_TURSO) {
-          await _tursoClient.execute(sql);
-        } else {
-          _db.run(sql);
-          saveToDisk();
-        }
-      };
+      return (sql) => { _db.run(sql); saveToDisk(); };
     }
     if (prop === 'pragma') {
-      return async (str) => {
-        try {
-          if (USE_TURSO) await _tursoClient.execute(`PRAGMA ${str}`);
-          else _db.run(`PRAGMA ${str}`);
-        } catch (_) { /* ignore */ }
-      };
+      return (str) => { try { _db.run(`PRAGMA ${str}`); } catch (_) {} };
     }
     if (prop === 'transaction') {
       return (fn) => async (...args) => {
-        if (USE_TURSO) {
-          // Turso supports batch for transactions
-          return await fn(...args);
-        }
         _db.run('BEGIN');
         try {
           const result = fn(...args);
@@ -256,51 +109,34 @@ const db = new Proxy({}, {
 
 // ─── initializeDatabase ───────────────────────────────────────────────────────
 async function initializeDatabase() {
-  if (USE_TURSO) {
-    // ── Turso path ────────────────────────────────────────────────────────────
-    if (!_tursoClient) {
-      const { createClient } = require('@libsql/client');
-      _tursoClient = createClient({
-        url:       process.env.TURSO_DATABASE_URL,
-        authToken: process.env.TURSO_AUTH_TOKEN,
-      });
-      console.log('Using Turso hosted SQLite database');
-    }
-  } else {
-    // ── sql.js path (local dev OR Vercel + Blob) ─────────────────────────────
-    if (!_SQL) {
-      const initSqlJs = require('sql.js');
-      const wasmDir = path.dirname(require.resolve('sql.js/dist/sql-wasm.js'));
-      _SQL = await initSqlJs({ locateFile: f => path.join(wasmDir, f) });
-    }
-    if (!_db) {
-      // If Vercel Blob is configured, try to restore from the blob first.
-      if (USE_BLOB) {
-        console.log('Vercel Blob configured – attempting to restore DB from blob…');
-        await _loadFromBlob(); // writes to DB_PATH if found
-      }
-      _db = fs.existsSync(DB_PATH)
-        ? new _SQL.Database(fs.readFileSync(DB_PATH))
-        : new _SQL.Database();
-    }
-    setInterval(saveToDisk, 10000);
-    process.on('exit', () => {
-      saveToDisk();
-      // Sync blob save on exit isn't possible (async), but disk save is enough
-    });
-    process.on('SIGINT', () => { saveToDisk(); process.exit(); });
-    console.log(USE_BLOB ? 'Using sql.js + Vercel Blob (persistent)' : 'Using sql.js SQLite (local)');
+  if (!_SQL) {
+    const initSqlJs = require('sql.js');
+    const wasmDir = path.dirname(require.resolve('sql.js/dist/sql-wasm.js'));
+    _SQL = await initSqlJs({ locateFile: f => path.join(wasmDir, f) });
+    console.log('[DB] sql.js WASM loaded');
   }
 
-  // ── Schema (CREATE TABLE IF NOT EXISTS – safe to run every cold start) ─────
-  const exec = async (sql) => {
-    if (USE_TURSO) await _tursoClient.execute(sql);
-    else { _db.run(sql); }
-  };
+  if (!_db) {
+    if (fs.existsSync(DB_PATH)) {
+      _db = new _SQL.Database(fs.readFileSync(DB_PATH));
+      console.log(`[DB] Loaded existing database from ${DB_PATH}`);
+    } else {
+      _db = new _SQL.Database();
+      console.log(`[DB] Created new in-memory database (will save to ${DB_PATH})`);
+    }
 
-  await exec(`PRAGMA foreign_keys = ON`);
+    // Flush to disk every 10 seconds and on process exit
+    setInterval(saveToDisk, 10000);
+    process.on('exit', saveToDisk);
+    process.on('SIGINT', () => { saveToDisk(); process.exit(); });
+  }
 
-  await exec(`CREATE TABLE IF NOT EXISTS carparks (
+  // ── Schema (IF NOT EXISTS – safe to run on every cold start) ────────────────
+  const x = (sql) => _db.run(sql);
+
+  x(`PRAGMA foreign_keys = ON`);
+
+  x(`CREATE TABLE IF NOT EXISTS carparks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     address TEXT,
@@ -310,7 +146,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  await exec(`CREATE TABLE IF NOT EXISTS users (
+  x(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
@@ -322,7 +158,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  await exec(`CREATE TABLE IF NOT EXISTS customers (
+  x(`CREATE TABLE IF NOT EXISTS customers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     first_name TEXT,
     last_name TEXT,
@@ -335,7 +171,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  await exec(`CREATE TABLE IF NOT EXISTS longterm_customers (
+  x(`CREATE TABLE IF NOT EXISTS longterm_customers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lt_number TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
@@ -352,7 +188,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  await exec(`CREATE TABLE IF NOT EXISTS account_customers (
+  x(`CREATE TABLE IF NOT EXISTS account_customers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_name TEXT NOT NULL,
     contact_name TEXT,
@@ -368,7 +204,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  await exec(`CREATE TABLE IF NOT EXISTS pricing_rules (
+  x(`CREATE TABLE IF NOT EXISTS pricing_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     carpark_id INTEGER DEFAULT 1,
     customer_type TEXT DEFAULT 'short',
@@ -379,7 +215,7 @@ async function initializeDatabase() {
     active INTEGER DEFAULT 1
   )`);
 
-  await exec(`CREATE TABLE IF NOT EXISTS invoices (
+  x(`CREATE TABLE IF NOT EXISTS invoices (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     invoice_number INTEGER UNIQUE,
     carpark_id INTEGER DEFAULT 1,
@@ -421,7 +257,7 @@ async function initializeDatabase() {
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  await exec(`CREATE TABLE IF NOT EXISTS key_box (
+  x(`CREATE TABLE IF NOT EXISTS key_box (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     carpark_id INTEGER DEFAULT 1,
     key_number INTEGER NOT NULL,
@@ -430,7 +266,7 @@ async function initializeDatabase() {
     UNIQUE(carpark_id, key_number)
   )`);
 
-  await exec(`CREATE TABLE IF NOT EXISTS petty_cash (
+  x(`CREATE TABLE IF NOT EXISTS petty_cash (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     carpark_id INTEGER DEFAULT 1,
     date DATE NOT NULL,
@@ -442,7 +278,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  await exec(`CREATE TABLE IF NOT EXISTS banking (
+  x(`CREATE TABLE IF NOT EXISTS banking (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     carpark_id INTEGER DEFAULT 1,
     date DATE UNIQUE NOT NULL,
@@ -455,7 +291,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  await exec(`CREATE TABLE IF NOT EXISTS end_day (
+  x(`CREATE TABLE IF NOT EXISTS end_day (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     carpark_id INTEGER DEFAULT 1,
     date DATE UNIQUE NOT NULL,
@@ -471,7 +307,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  await exec(`CREATE TABLE IF NOT EXISTS email_logs (
+  x(`CREATE TABLE IF NOT EXISTS email_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     carpark_id INTEGER DEFAULT 1,
     account_customer_id INTEGER,
@@ -484,9 +320,7 @@ async function initializeDatabase() {
     recipient_email TEXT
   )`);
 
-  if (!USE_TURSO) saveToDisk();
-
-  // ── Seed data (safe – uses INSERT OR IGNORE / check-first) ─────────────────
+  // ── Seed data (INSERT OR IGNORE / check-first so re-runs are safe) ─────────
   const cp = await db.prepare('SELECT id FROM carparks WHERE id = 1').get();
   if (!cp) {
     await db.prepare(`INSERT INTO carparks (id, name, address, phone, email, capacity) VALUES (?, ?, ?, ?, ?, ?)`)
@@ -504,7 +338,7 @@ async function initializeDatabase() {
     const hash = bcrypt.hashSync('Admin@BOI2026!Secure', 10);
     await db.prepare(`INSERT INTO users (username, password, name, email, role, carpark_id) VALUES (?, ?, ?, ?, ?, ?)`)
       .run('admin', hash, 'Administrator', 'admin@carparkyard.co.nz', 'admin', 1);
-  } else if (adminRow && bcrypt.compareSync('admin123', adminRow.password)) {
+  } else if (bcrypt.compareSync('admin123', adminRow.password)) {
     const hash = bcrypt.hashSync('Admin@BOI2026!Secure', 10);
     await db.prepare('UPDATE users SET password = ? WHERE username = ?').run(hash, 'admin');
   }
@@ -515,7 +349,7 @@ async function initializeDatabase() {
     const hash = bcrypt.hashSync('Staff@BOI2026!Secure', 10);
     await db.prepare(`INSERT INTO users (username, password, name, email, role, carpark_id) VALUES (?, ?, ?, ?, ?, ?)`)
       .run('staff', hash, 'Flo', 'flo@carparkyard.co.nz', 'staff', 1);
-  } else if (staffRow && bcrypt.compareSync('staff123', staffRow.password)) {
+  } else if (bcrypt.compareSync('staff123', staffRow.password)) {
     const hash = bcrypt.hashSync('Staff@BOI2026!Secure', 10);
     await db.prepare('UPDATE users SET password = ? WHERE username = ?').run(hash, 'staff');
   }
@@ -543,9 +377,9 @@ async function initializeDatabase() {
   const acctRow = await db.prepare('SELECT id FROM account_customers WHERE carpark_id = 1').get();
   if (!acctRow) {
     const ia = db.prepare(`INSERT INTO account_customers (company_name, contact_name, phone, email, billing_email, payment_link, carpark_id) VALUES (?, ?, ?, ?, ?, ?, ?)`);
-    await ia.run('CTM Corrections Travel Team', 'John Smith',  '09 000 0001', 'accounts@ctm.co.nz',       'accounts@ctm.co.nz',       '', 1);
-    await ia.run('Far North District Council',  'Sarah Jones', '09 000 0002', 'accounts@fndc.govt.nz',     'accounts@fndc.govt.nz',     '', 1);
-    await ia.run('Top Energy',                  'Mike Brown',  '09 000 0003', 'accounts@topenergy.co.nz',  'accounts@topenergy.co.nz',  '', 1);
+    await ia.run('CTM Corrections Travel Team', 'John Smith',  '09 000 0001', 'accounts@ctm.co.nz',      'accounts@ctm.co.nz',      '', 1);
+    await ia.run('Far North District Council',  'Sarah Jones', '09 000 0002', 'accounts@fndc.govt.nz',    'accounts@fndc.govt.nz',    '', 1);
+    await ia.run('Top Energy',                  'Mike Brown',  '09 000 0003', 'accounts@topenergy.co.nz', 'accounts@topenergy.co.nz', '', 1);
   }
 
   // Long-term customers
@@ -605,25 +439,13 @@ async function initializeDatabase() {
     await db.prepare("UPDATE key_box SET status = 'in_use', invoice_id = 3 WHERE carpark_id = 1 AND key_number = 22").run();
   }
 
-  if (!USE_TURSO) {
-    saveToDisk();
-    // If blob is active, push the freshly-seeded DB so future cold starts
-    // can restore it.
-    if (USE_BLOB) await _saveToBlobNow();
-  }
-  const mode = USE_TURSO ? 'Turso' : USE_BLOB ? 'sql.js + Vercel Blob' : 'sql.js (local)';
-  console.log(`Database initialized (${mode}).`);
-  // From this point every run() call will synchronously upload to Vercel Blob.
-  _initDone = true;
+  saveToDisk();
+  console.log('[DB] Database ready');
 }
 
-// Wipe the in-memory DB and re-run initializeDatabase so it picks up a clean slate.
-// Called by the admin /reset-db endpoint after blobs have been deleted.
+// Wipe and re-initialise (called by admin /reset-db endpoint)
 async function resetDatabase() {
-  _initDone = false;
-  _db = null;
-  _tursoClient = null;
-  // Clear the cached init promise in server.js by re-running full init
+  _db  = null;
   await initializeDatabase();
 }
 

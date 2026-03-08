@@ -84,46 +84,24 @@ app.use('/api/flights',   require('./src/routes/flights'));
 
 // ─── Diagnostic endpoint (no auth – safe, read-only) ─────────────────────────
 app.get('/api/status', async (req, res) => {
-  const USE_BLOB  = !!process.env.BLOB_READ_WRITE_TOKEN;
-  const USE_TURSO = !!(process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN);
-  const info = {
-    mode: USE_TURSO ? 'Turso' : USE_BLOB ? 'sql.js + Vercel Blob' : 'sql.js local (no persistence)',
-    blob_token_set: USE_BLOB,
-    turso_set: USE_TURSO,
-    blobs: [],
-    db_stats: {}
-  };
   try {
-    if (USE_BLOB) {
-      const { list } = require('@vercel/blob');
-      const { blobs } = await list({ prefix: 'carpark-db/', token: process.env.BLOB_READ_WRITE_TOKEN });
-      info.blobs = blobs.map(b => ({ pathname: b.pathname, uploadedAt: b.uploadedAt, size: b.size }));
-    }
     const invoiceCount = await db.prepare('SELECT COUNT(*) as c FROM invoices WHERE void = 0').get();
     const keyInUse     = await db.prepare("SELECT COUNT(*) as c FROM key_box WHERE status = 'in_use'").get();
     const keyAvail     = await db.prepare("SELECT COUNT(*) as c FROM key_box WHERE status = 'available'").get();
-    info.db_stats = { invoices: invoiceCount.c, keys_in_use: keyInUse.c, keys_available: keyAvail.c };
+    res.json({
+      mode: 'sql.js (file-backed SQLite)',
+      db_path: process.env.VERCEL ? '/tmp/carpark.db' : 'carpark.db',
+      db_stats: { invoices: invoiceCount.c, keys_in_use: keyInUse.c, keys_available: keyAvail.c }
+    });
   } catch (e) {
-    info.error = e.message;
+    res.status(500).json({ error: e.message });
   }
-  res.json(info);
 });
 
-// ─── Admin: hard-reset blob and re-seed DB ────────────────────────────────────
+// ─── Admin: re-seed DB ────────────────────────────────────────────────────────
 app.post('/api/admin/reset-db', async (req, res) => {
-  // Require admin auth
   if (!req.session || req.session.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   try {
-    if (process.env.BLOB_READ_WRITE_TOKEN) {
-      const { list, del } = require('@vercel/blob');
-      // Delete ALL carpark-db blobs (old and new naming schemes)
-      const { blobs } = await list({ prefix: 'carpark-db/', token: process.env.BLOB_READ_WRITE_TOKEN });
-      if (blobs.length) {
-        await del(blobs.map(b => b.url), { token: process.env.BLOB_READ_WRITE_TOKEN });
-        console.log(`[Reset] Deleted ${blobs.length} blob(s)`);
-      }
-    }
-    // Force re-initialisation on the next request
     const dbModule = require('./src/database');
     await dbModule.resetDatabase();
     res.json({ success: true, message: 'Database reset. Refresh the app.' });

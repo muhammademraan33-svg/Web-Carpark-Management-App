@@ -1,8 +1,8 @@
 # Dependencies
 node_modules/
 
-# Database (contains live data - don't commit)
-carpark.db
+# Database is committed so Vercel deployments start with seed data.
+# DO NOT add carpark.db back here.
 
 # Environment variables (contains secrets)
 config.env
