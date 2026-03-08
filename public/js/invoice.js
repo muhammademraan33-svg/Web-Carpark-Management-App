@@ -85,7 +85,41 @@ async function initInvoicePage() {
   }
 
   updateNavCarsCount();
+  loadFlightsForDate(document.getElementById('inv-return-date').value);
 }
+
+// ─── Live flight dropdown from Air NZ (BOI/KKE) ──────────────────────────────
+async function loadFlightsForDate(dateStr) {
+  const sel = document.getElementById('inv-flight-arrival-select');
+  if (!sel) return;
+  const date = dateStr || document.getElementById('inv-return-date').value || new Date().toISOString().split('T')[0];
+  sel.innerHTML = '<option value="">✈ Loading flights…</option>';
+  try {
+    const res  = await fetch(`/api/flights/arrivals?date=${date}`);
+    if (!res.ok) throw new Error('fetch failed');
+    const data = await res.json();
+    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const day  = days[data.dayOfWeek] || '';
+    const liveTag = data.live ? ' (live)' : '';
+    sel.innerHTML = `<option value="">✈ ${day} flights – Bay of Islands${liveTag}</option>`;
+    (data.flights || []).forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f.time;
+      const status = f.status && f.status !== 'scheduled' && f.status !== 'on-time' ? ` ⚠ ${f.status}` : '';
+      opt.textContent = `${f.label || f.time}  ${f.flight}${status}`;
+      sel.appendChild(opt);
+    });
+  } catch (_) {
+    sel.innerHTML = '<option value="">✈ Flights unavailable</option>';
+  }
+}
+
+document.getElementById('inv-flight-arrival-select').addEventListener('change', (e) => {
+  if (e.target.value) {
+    document.getElementById('inv-return-time').value = e.target.value;
+    e.target.value = '';
+  }
+});
 
 async function newInvoice() {
   // Get next invoice number
@@ -271,6 +305,7 @@ document.getElementById('inv-rego').addEventListener('keydown', (e) => {
 document.getElementById('inv-date-in').addEventListener('change', updateNightsAndDisplay);
 document.getElementById('inv-return-date').addEventListener('change', () => {
   updateNightsAndDisplay();
+  loadFlightsForDate(document.getElementById('inv-return-date').value);
 });
 document.getElementById('inv-time-in').addEventListener('change', updateNightsAndDisplay);
 
@@ -279,6 +314,7 @@ document.getElementById('btn-prev-date').addEventListener('click', () => {
   d.setDate(d.getDate() - 1);
   document.getElementById('inv-return-date').value = d.toISOString().split('T')[0];
   updateNightsAndDisplay();
+  loadFlightsForDate(document.getElementById('inv-return-date').value);
 });
 
 document.getElementById('btn-next-date').addEventListener('click', () => {
@@ -286,6 +322,7 @@ document.getElementById('btn-next-date').addEventListener('click', () => {
   d.setDate(d.getDate() + 1);
   document.getElementById('inv-return-date').value = d.toISOString().split('T')[0];
   updateNightsAndDisplay();
+  loadFlightsForDate(document.getElementById('inv-return-date').value);
 });
 
 document.getElementById('split-payment-toggle').addEventListener('change', (e) => {
