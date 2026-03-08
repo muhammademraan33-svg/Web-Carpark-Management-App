@@ -39,14 +39,6 @@
           </button>
         </div>
         <div class="col-md-2">
-          <label class="form-label">Invoice #</label>
-          <div class="input-group">
-            <span class="input-group-text"><small>V:</small></span>
-            <input type="number" class="form-control" id="inv-load-number" placeholder="18990">
-            <button class="btn btn-outline-primary" id="btn-load-invoice"><i class="bi bi-search"></i></button>
-          </div>
-        </div>
-        <div class="col-md-2">
           <button class="btn btn-primary w-100" id="btn-new-invoice">
             <i class="bi bi-plus-lg"></i> New Invoice
           </button>
@@ -159,19 +151,8 @@
                   <option value="">-- Direct Customer --</option>
                 </select>
               </div>
-              <div class="col-md-6">
-                <label class="form-label">Return Flight</label>
-                <input type="text" class="form-control" id="inv-flight-info" placeholder="Flight NZ123">
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Flight Type</label>
-                <select class="form-select" id="inv-flight-type">
-                  <option>Standard - On Flight</option>
-                  <option>International</option>
-                  <option>Domestic</option>
-                  <option>No Flight</option>
-                </select>
-              </div>
+              <input type="hidden" id="inv-flight-info" value="">
+              <input type="hidden" id="inv-flight-type" value="Standard - On Flight">
             </div>
           </div>
 

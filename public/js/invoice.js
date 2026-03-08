@@ -95,7 +95,6 @@ async function newInvoice() {
   if (res.ok) {
     const data = await res.json();
     document.getElementById('inv-number-display').textContent = data.invoiceNumber;
-    document.getElementById('inv-load-number').value = '';
   }
 
   // Clear form
@@ -283,6 +282,7 @@ document.getElementById('btn-prev-date').addEventListener('click', () => {
   d.setDate(d.getDate() - 1);
   document.getElementById('inv-return-date').value = d.toISOString().split('T')[0];
   updateNightsAndDisplay();
+  loadFlightsForDate(document.getElementById('inv-return-date').value);
 });
 
 document.getElementById('btn-next-date').addEventListener('click', () => {
@@ -290,6 +290,7 @@ document.getElementById('btn-next-date').addEventListener('click', () => {
   d.setDate(d.getDate() + 1);
   document.getElementById('inv-return-date').value = d.toISOString().split('T')[0];
   updateNightsAndDisplay();
+  loadFlightsForDate(document.getElementById('inv-return-date').value);
 });
 
 document.getElementById('split-payment-toggle').addEventListener('change', (e) => {
@@ -469,16 +470,6 @@ document.getElementById('customer-search').addEventListener('keypress', (e) => {
   if (e.key === 'Enter') document.getElementById('btn-search-customer').click();
 });
 
-// Load invoice by number
-document.getElementById('btn-load-invoice').addEventListener('click', async () => {
-  const num = document.getElementById('inv-load-number').value.trim();
-  if (num) await loadInvoice(num, null);
-});
-
-document.getElementById('inv-load-number').addEventListener('keypress', async (e) => {
-  if (e.key === 'Enter') document.getElementById('btn-load-invoice').click();
-});
-
 // New invoice button
 document.getElementById('btn-new-invoice').addEventListener('click', () => {
   newInvoice();
@@ -540,13 +531,11 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
   };
 
   _saving = true;
-  const btn     = document.getElementById('btn-save');
-  const btnNew  = document.getElementById('btn-new-invoice');
-  const btnLoad = document.getElementById('btn-load-invoice');
+  const btn    = document.getElementById('btn-save');
+  const btnNew = document.getElementById('btn-new-invoice');
   btn.disabled  = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
-  if (btnNew)  btnNew.disabled  = true;
-  if (btnLoad) btnLoad.disabled = true;
+  if (btnNew) btnNew.disabled = true;
 
   try {
     let res;
@@ -608,8 +597,7 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
   _saving = false;
   btn.disabled  = false;
   btn.innerHTML = `<i class="bi bi-floppy me-2"></i><span id="save-btn-text">UPDATE INVOICE</span>`;
-  if (btnNew)  btnNew.disabled  = false;
-  if (btnLoad) btnLoad.disabled = false;
+  if (btnNew) btnNew.disabled = false;
   updateNavCarsCount();
 });
 
