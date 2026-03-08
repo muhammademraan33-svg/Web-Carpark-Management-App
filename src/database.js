@@ -21,9 +21,13 @@ const fs     = require('fs');
 let _SQL = null;  // sql.js WASM constructor
 let _db  = null;  // sql.js Database instance
 
+// On Vercel serverless the deployed filesystem is read-only, but /tmp is
+// writable.  We keep the live DB in /tmp; on the very first cold-start we
+// bootstrap it from the committed carpark.db so the seed data is present.
+const COMMITTED_DB = path.join(__dirname, '..', 'carpark.db'); // always in repo
 const DB_PATH = process.env.VERCEL
   ? '/tmp/carpark.db'
-  : path.join(__dirname, '..', 'carpark.db');
+  : COMMITTED_DB;
 
 // ─── Disk helpers ─────────────────────────────────────────────────────────────
 function saveToDisk() {
@@ -117,6 +121,13 @@ async function initializeDatabase() {
   }
 
   if (!_db) {
+    // On Vercel: if /tmp/carpark.db doesn't exist yet, copy the committed
+    // seed DB so the app starts with real data instead of a blank slate.
+    if (process.env.VERCEL && !fs.existsSync(DB_PATH) && fs.existsSync(COMMITTED_DB)) {
+      fs.copyFileSync(COMMITTED_DB, DB_PATH);
+      console.log('[DB] Bootstrapped /tmp/carpark.db from committed seed file');
+    }
+
     if (fs.existsSync(DB_PATH)) {
       _db = new _SQL.Database(fs.readFileSync(DB_PATH));
       console.log(`[DB] Loaded existing database from ${DB_PATH}`);
