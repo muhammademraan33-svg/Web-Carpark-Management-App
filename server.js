@@ -214,7 +214,7 @@ cron.schedule('0 8 20 * *', async () => {
 if (require.main === module) {
   const PORT = process.env.PORT || 3000;
   initializeDatabase().then(() => {
-    app.listen(PORT, () => {
+    app.listen(PORT, '0.0.0.0', () => {
       console.log(`\n================================================`);
       console.log(`  BOI Car Storage - Carpark Management System`);
       console.log(`  Running at: http://localhost:${PORT}`);
