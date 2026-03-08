@@ -85,8 +85,6 @@ async function initInvoicePage() {
   }
 
   updateNavCarsCount();
-  // Load today's flights for the default return date
-  loadFlightsForDate(document.getElementById('inv-return-date').value);
 }
 
 async function newInvoice() {
@@ -273,7 +271,6 @@ document.getElementById('inv-rego').addEventListener('keydown', (e) => {
 document.getElementById('inv-date-in').addEventListener('change', updateNightsAndDisplay);
 document.getElementById('inv-return-date').addEventListener('change', () => {
   updateNightsAndDisplay();
-  loadFlightsForDate(document.getElementById('inv-return-date').value);
 });
 document.getElementById('inv-time-in').addEventListener('change', updateNightsAndDisplay);
 
@@ -282,7 +279,6 @@ document.getElementById('btn-prev-date').addEventListener('click', () => {
   d.setDate(d.getDate() - 1);
   document.getElementById('inv-return-date').value = d.toISOString().split('T')[0];
   updateNightsAndDisplay();
-  loadFlightsForDate(document.getElementById('inv-return-date').value);
 });
 
 document.getElementById('btn-next-date').addEventListener('click', () => {
@@ -290,7 +286,6 @@ document.getElementById('btn-next-date').addEventListener('click', () => {
   d.setDate(d.getDate() + 1);
   document.getElementById('inv-return-date').value = d.toISOString().split('T')[0];
   updateNightsAndDisplay();
-  loadFlightsForDate(document.getElementById('inv-return-date').value);
 });
 
 document.getElementById('split-payment-toggle').addEventListener('change', (e) => {
@@ -300,45 +295,6 @@ document.getElementById('split-payment-toggle').addEventListener('change', (e) =
 document.getElementById('inv-no-key').addEventListener('change', (e) => {
   document.getElementById('inv-key-number').disabled = e.target.checked;
   if (e.target.checked) document.getElementById('inv-key-number').value = '';
-});
-
-// ─── Flight arrival dropdown – populated from /api/flights/arrivals ───────────
-async function loadFlightsForDate(dateStr) {
-  const sel = document.getElementById('inv-flight-arrival-select');
-  try {
-    const date = dateStr || document.getElementById('inv-return-date').value || new Date().toISOString().split('T')[0];
-    const res = await fetch(`/api/flights/arrivals?date=${date}`);
-    if (!res.ok) throw new Error('fetch failed');
-    const data = await res.json();
-
-    // Day name for the label
-    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-    const dayName = days[data.dayOfWeek] || '';
-
-    sel.innerHTML = `<option value="">✈ ${dayName} flights (BOI/KKE)</option>`;
-    (data.flights || []).forEach(f => {
-      const opt = document.createElement('option');
-      opt.value = f.time;
-      opt.textContent = `${f.time} – ${f.label} (${f.flight})`;
-      sel.appendChild(opt);
-    });
-  } catch (_) {
-    sel.innerHTML = `<option value="">✈ Flights (BOI/KKE)</option>
-      <option value="08:45">08:45 – Morning (NZ8391)</option>
-      <option value="11:45">11:45 – Midday (NZ8393)</option>
-      <option value="14:35">14:35 – Afternoon (NZ8395)</option>
-      <option value="16:35">16:35 – Late afternoon (NZ8397)</option>
-      <option value="19:00">19:00 – Evening (NZ8399)</option>`;
-  }
-}
-
-// When a flight arrival is selected, copy the time into the Return Time field
-document.getElementById('inv-flight-arrival-select').addEventListener('change', (e) => {
-  if (e.target.value) {
-    document.getElementById('inv-return-time').value = e.target.value;
-    // Reset select back to placeholder so it's usable again
-    e.target.value = '';
-  }
 });
 
 // ─── 10% Discount: auto-recalculate when toggled (if price already calculated) ─
