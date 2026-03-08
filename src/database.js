@@ -21,13 +21,22 @@ const fs     = require('fs');
 let _SQL = null;  // sql.js WASM constructor
 let _db  = null;  // sql.js Database instance
 
-// On Vercel serverless the deployed filesystem is read-only, but /tmp is
-// writable.  We keep the live DB in /tmp; on the very first cold-start we
-// bootstrap it from the committed carpark.db so the seed data is present.
+// ─── Database path resolution ─────────────────────────────────────────────────
+//
+//  Platform          | Path used
+//  ──────────────────|──────────────────────────────────────────────────────────
+//  Local / Railway   | <project-root>/carpark.db  (writable persistent disk)
+//  Railway + Volume  | $DB_FILE_PATH (set in Railway env vars, e.g. /data/carpark.db)
+//  Vercel serverless | /tmp/carpark.db  (writable but ephemeral per-container)
+//
+//  On Railway with a Volume mounted at /data, set env var DB_FILE_PATH=/data/carpark.db
+//  The app will bootstrap from the committed seed file on first run, then
+//  persist ALL changes to the volume — surviving restarts AND re-deployments.
+//
 const COMMITTED_DB = path.join(__dirname, '..', 'carpark.db'); // always in repo
-const DB_PATH = process.env.VERCEL
-  ? '/tmp/carpark.db'
-  : COMMITTED_DB;
+const DB_PATH = process.env.DB_FILE_PATH          // Railway volume override
+  || (process.env.VERCEL ? '/tmp/carpark.db'      // Vercel serverless (ephemeral)
+  : COMMITTED_DB);                                // local / default
 
 // ─── Disk helpers ─────────────────────────────────────────────────────────────
 function saveToDisk() {
@@ -121,11 +130,17 @@ async function initializeDatabase() {
   }
 
   if (!_db) {
-    // On Vercel: if /tmp/carpark.db doesn't exist yet, copy the committed
-    // seed DB so the app starts with real data instead of a blank slate.
-    if (process.env.VERCEL && !fs.existsSync(DB_PATH) && fs.existsSync(COMMITTED_DB)) {
+    // If the live DB path doesn't exist yet, bootstrap from the committed seed
+    // file.  This handles three cases:
+    //   1. Vercel cold-start  (/tmp/carpark.db missing → copy seed)
+    //   2. Railway Volume first run (/data/carpark.db missing → copy seed,
+    //      then ALL future writes persist to the volume across deployments)
+    //   3. Fresh local checkout (carpark.db missing → copy seed, or create blank)
+    if (!fs.existsSync(DB_PATH) && DB_PATH !== COMMITTED_DB && fs.existsSync(COMMITTED_DB)) {
+      const dir = path.dirname(DB_PATH);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       fs.copyFileSync(COMMITTED_DB, DB_PATH);
-      console.log('[DB] Bootstrapped /tmp/carpark.db from committed seed file');
+      console.log(`[DB] Bootstrapped ${DB_PATH} from committed seed file`);
     }
 
     if (fs.existsSync(DB_PATH)) {
