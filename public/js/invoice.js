@@ -153,15 +153,12 @@ async function newInvoice() {
   // Clear any existing customer alert (if the alert elements exist)
   setCustomerAlertText('');
 
-  // Set default dates
+  // Set default dates using local time (not UTC) so NZ timezone is correct
   const now = new Date();
-  const todayStr = now.toISOString().split('T')[0];
-  document.getElementById('inv-date-in').value = todayStr;
+  document.getElementById('inv-date-in').value = localDateStr(now);
   document.getElementById('inv-time-in').value = now.toTimeString().substr(0, 5);
   // Default return: tomorrow
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  document.getElementById('inv-return-date').value = tomorrow.toISOString().split('T')[0];
+  document.getElementById('inv-return-date').value = addDays(localDateStr(now), 1);
   document.getElementById('inv-return-time').value = '14:35';
 
   updateNightsAndDisplay();
@@ -310,17 +307,15 @@ document.getElementById('inv-return-date').addEventListener('change', () => {
 document.getElementById('inv-time-in').addEventListener('change', updateNightsAndDisplay);
 
 document.getElementById('btn-prev-date').addEventListener('click', () => {
-  const d = new Date(document.getElementById('inv-return-date').value || today());
-  d.setDate(d.getDate() - 1);
-  document.getElementById('inv-return-date').value = d.toISOString().split('T')[0];
+  const cur = document.getElementById('inv-return-date').value || today();
+  document.getElementById('inv-return-date').value = addDays(cur, -1);
   updateNightsAndDisplay();
   loadFlightsForDate(document.getElementById('inv-return-date').value);
 });
 
 document.getElementById('btn-next-date').addEventListener('click', () => {
-  const d = new Date(document.getElementById('inv-return-date').value || today());
-  d.setDate(d.getDate() + 1);
-  document.getElementById('inv-return-date').value = d.toISOString().split('T')[0];
+  const cur = document.getElementById('inv-return-date').value || today();
+  document.getElementById('inv-return-date').value = addDays(cur, 1);
   updateNightsAndDisplay();
   loadFlightsForDate(document.getElementById('inv-return-date').value);
 });

@@ -169,8 +169,17 @@ async function initializeDatabase() {
     phone TEXT,
     email TEXT,
     capacity INTEGER DEFAULT 100,
+    bank_name TEXT,
+    bank_account_name TEXT,
+    bank_account_number TEXT,
+    bank_reference TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+
+  // Migrate: add bank columns to existing carparks table if not present
+  ['bank_name','bank_account_name','bank_account_number','bank_reference'].forEach(col => {
+    try { x(`ALTER TABLE carparks ADD COLUMN ${col} TEXT`); } catch (_) {}
+  });
 
   x(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

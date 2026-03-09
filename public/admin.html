@@ -71,6 +71,28 @@
               <input type="email" class="form-control" id="cp-email">
             </div>
           </div>
+
+          <hr class="my-3">
+          <h6 class="text-muted mb-3"><i class="bi bi-bank me-1"></i>Bank Details (shown on printed receipts)</h6>
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label">Bank Name</label>
+              <input type="text" class="form-control" id="cp-bank-name" placeholder="e.g. ANZ">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Account Name</label>
+              <input type="text" class="form-control" id="cp-bank-account-name" placeholder="e.g. BOI Car Storage Ltd">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Account Number</label>
+              <input type="text" class="form-control" id="cp-bank-account-number" placeholder="e.g. 01-0123-0456789-00">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Payment Reference <small class="text-muted">(optional)</small></label>
+              <input type="text" class="form-control" id="cp-bank-reference" placeholder="e.g. Your invoice number">
+            </div>
+          </div>
+
           <button class="btn btn-primary mt-3" id="btn-save-carpark">
             <i class="bi bi-floppy me-1"></i>Save Carpark Settings
           </button>
@@ -319,6 +341,10 @@
       document.getElementById('cp-address').value = cp.address||'';
       document.getElementById('cp-phone').value = cp.phone||'';
       document.getElementById('cp-email').value = cp.email||'';
+      document.getElementById('cp-bank-name').value = cp.bank_name||'';
+      document.getElementById('cp-bank-account-name').value = cp.bank_account_name||'';
+      document.getElementById('cp-bank-account-number').value = cp.bank_account_number||'';
+      document.getElementById('cp-bank-reference').value = cp.bank_reference||'';
     }
 
     document.getElementById('btn-save-carpark').addEventListener('click', async () => {
@@ -327,7 +353,11 @@
         capacity: document.getElementById('cp-capacity').value,
         address: document.getElementById('cp-address').value,
         phone: document.getElementById('cp-phone').value,
-        email: document.getElementById('cp-email').value
+        email: document.getElementById('cp-email').value,
+        bank_name: document.getElementById('cp-bank-name').value,
+        bank_account_name: document.getElementById('cp-bank-account-name').value,
+        bank_account_number: document.getElementById('cp-bank-account-number').value,
+        bank_reference: document.getElementById('cp-bank-reference').value
       };
       const res = await fetch('/api/admin/carparks/1', {
         method: 'PUT',

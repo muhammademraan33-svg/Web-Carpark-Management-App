@@ -290,6 +290,24 @@ router.get('/:id/pdf', requireAuth, async (req, res) => {
     doc.moveDown(0.5);
     doc.moveTo(30, doc.y).lineTo(400, doc.y).stroke();
     doc.moveDown(0.3);
+
+    // Bank details section – only shown if configured in Admin settings
+    if (carpark.bank_account_number) {
+      doc.fontSize(9).font('Helvetica-Bold').text('Pay via Online Banking:', { underline: false });
+      doc.font('Helvetica');
+      if (carpark.bank_name)           doc.fontSize(9).text(`Bank: ${carpark.bank_name}`);
+      if (carpark.bank_account_name)   doc.fontSize(9).text(`Account Name: ${carpark.bank_account_name}`);
+      doc.fontSize(9).text(`Account Number: ${carpark.bank_account_number}`);
+      if (carpark.bank_reference) {
+        doc.fontSize(9).text(`Reference: ${carpark.bank_reference} (Invoice #${invoice.invoice_number})`);
+      } else {
+        doc.fontSize(9).text(`Reference: Invoice #${invoice.invoice_number}`);
+      }
+      doc.moveDown(0.5);
+      doc.moveTo(30, doc.y).lineTo(400, doc.y).stroke();
+      doc.moveDown(0.3);
+    }
+
     doc.fontSize(8).text('Thank you for choosing ' + (carpark.name || 'our Car Storage Yard'), { align: 'center' });
     doc.end();
   } catch (err) { res.status(500).json({ error: err.message }); }

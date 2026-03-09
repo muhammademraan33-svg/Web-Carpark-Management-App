@@ -233,16 +233,12 @@
     // Date navigation
     document.getElementById('filter-date').value = currentDate;
     document.getElementById('btn-prev-day').addEventListener('click', () => {
-      const d = new Date(currentDate + 'T00:00:00');
-      d.setDate(d.getDate() - 1);
-      currentDate = d.toISOString().split('T')[0];
+      currentDate = addDays(currentDate, -1);
       document.getElementById('filter-date').value = currentDate;
       loadReturns();
     });
     document.getElementById('btn-next-day').addEventListener('click', () => {
-      const d = new Date(currentDate + 'T00:00:00');
-      d.setDate(d.getDate() + 1);
-      currentDate = d.toISOString().split('T')[0];
+      currentDate = addDays(currentDate, 1);
       document.getElementById('filter-date').value = currentDate;
       loadReturns();
     });

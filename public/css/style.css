@@ -40,7 +40,7 @@ body {
   letter-spacing: 0.5px;
 }
 
-.nav-link {
+.navbar .nav-link {
   color: rgba(255,255,255,0.9) !important;
   font-size: 0.85rem;
   padding: 0.4rem 0.7rem !important;
@@ -48,7 +48,7 @@ body {
   transition: background 0.2s;
 }
 
-.nav-link:hover, .nav-link.active {
+.navbar .nav-link:hover, .navbar .nav-link.active {
   background: rgba(255,255,255,0.2) !important;
   color: #fff !important;
 }

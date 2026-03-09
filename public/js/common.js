@@ -84,9 +84,25 @@ function formatDateShort(dateStr) {
   return `${day}-${months[d.getMonth()]}-${year}`;
 }
 
-// Get today's date in YYYY-MM-DD
+// Get today's date in YYYY-MM-DD (uses LOCAL time so NZ timezone is correct)
 function today() {
-  return new Date().toISOString().split('T')[0];
+  return localDateStr(new Date());
+}
+
+// Convert a Date object to YYYY-MM-DD using LOCAL time (not UTC)
+function localDateStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// Parse a YYYY-MM-DD string and add/subtract days, returning YYYY-MM-DD (local)
+function addDays(dateStr, n) {
+  const parts = dateStr.split('-');
+  const d = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+  d.setDate(d.getDate() + n);
+  return localDateStr(d);
 }
 
 // Get status badge HTML

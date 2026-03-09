@@ -48,8 +48,10 @@ router.get('/carparks', requireAuth, requireAdmin, async (req, res) => {
 
 router.put('/carparks/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { name, address, phone, email, capacity } = req.body;
-    await db.prepare('UPDATE carparks SET name=?, address=?, phone=?, email=?, capacity=? WHERE id=?').run(name, address, phone, email, capacity, req.params.id);
+    const { name, address, phone, email, capacity, bank_name, bank_account_name, bank_account_number, bank_reference } = req.body;
+    await db.prepare(`UPDATE carparks SET name=?, address=?, phone=?, email=?, capacity=?,
+      bank_name=?, bank_account_name=?, bank_account_number=?, bank_reference=? WHERE id=?`)
+      .run(name, address, phone, email, capacity, bank_name||null, bank_account_name||null, bank_account_number||null, bank_reference||null, req.params.id);
     const carpark = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(req.params.id);
     res.json(carpark);
   } catch (err) { res.status(500).json({ error: err.message }); }
