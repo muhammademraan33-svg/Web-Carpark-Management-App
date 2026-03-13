@@ -8,7 +8,8 @@ const JWT_SECRET  = () => process.env.SESSION_SECRET || 'carpark_secret_2026';
 const COOKIE_OPTS = {
   httpOnly: true,
   sameSite: 'lax',
-  maxAge: 8 * 60 * 60 * 1000
+  maxAge: 8 * 60 * 60 * 1000,
+  secure: process.env.NODE_ENV === 'production'  // Required for HTTPS (Railway)
 };
 
 // POST /api/auth/login

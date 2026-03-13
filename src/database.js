@@ -367,26 +367,33 @@ async function initializeDatabase() {
         100);
   }
 
+  // Force-reset passwords when RESET_ADMIN_PASSWORDS=1 (e.g. fix Railway volume mismatch)
+  const forceReset = process.env.RESET_ADMIN_PASSWORDS === '1' || process.env.RESET_ADMIN_PASSWORDS === 'true';
+
   // Admin user
   const adminRow = await db.prepare('SELECT id, password FROM users WHERE username = ?').get('admin');
+  const adminPass = 'Admin@BOI2026!Secure';
   if (!adminRow) {
-    const hash = bcrypt.hashSync('Admin@BOI2026!Secure', 10);
+    const hash = bcrypt.hashSync(adminPass, 10);
     await db.prepare(`INSERT INTO users (username, password, name, email, role, carpark_id) VALUES (?, ?, ?, ?, ?, ?)`)
       .run('admin', hash, 'Administrator', 'admin@carparkyard.co.nz', 'admin', 1);
-  } else if (bcrypt.compareSync('admin123', adminRow.password)) {
-    const hash = bcrypt.hashSync('Admin@BOI2026!Secure', 10);
+  } else if (forceReset || bcrypt.compareSync('admin123', adminRow.password)) {
+    const hash = bcrypt.hashSync(adminPass, 10);
     await db.prepare('UPDATE users SET password = ? WHERE username = ?').run(hash, 'admin');
+    if (forceReset) console.log('[Seed] Reset admin password (RESET_ADMIN_PASSWORDS)');
   }
 
   // Staff user
   const staffRow = await db.prepare('SELECT id, password FROM users WHERE username = ?').get('staff');
+  const staffPass = 'Staff@BOI2026!Secure';
   if (!staffRow) {
-    const hash = bcrypt.hashSync('Staff@BOI2026!Secure', 10);
+    const hash = bcrypt.hashSync(staffPass, 10);
     await db.prepare(`INSERT INTO users (username, password, name, email, role, carpark_id) VALUES (?, ?, ?, ?, ?, ?)`)
       .run('staff', hash, 'Flo', 'flo@carparkyard.co.nz', 'staff', 1);
-  } else if (bcrypt.compareSync('staff123', staffRow.password)) {
-    const hash = bcrypt.hashSync('Staff@BOI2026!Secure', 10);
+  } else if (forceReset || bcrypt.compareSync('staff123', staffRow.password)) {
+    const hash = bcrypt.hashSync(staffPass, 10);
     await db.prepare('UPDATE users SET password = ? WHERE username = ?').run(hash, 'staff');
+    if (forceReset) console.log('[Seed] Reset staff password (RESET_ADMIN_PASSWORDS)');
   }
 
   // Pricing rules
