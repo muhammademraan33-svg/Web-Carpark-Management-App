@@ -218,8 +218,8 @@ if (require.main === module) {
       console.log(`\n================================================`);
       console.log(`  BOI Car Storage - Carpark Management System`);
       console.log(`  Running at: http://0.0.0.0:${PORT}`);
-      console.log(`  Default login: admin / Admin@BOI2026!Secure`);
-      console.log(`  Staff login:   staff / Staff@BOI2026!Secure`);
+      console.log(`  Default login: admin / admin123`);
+      console.log(`  Staff login:   staff / staff123`);
       console.log(`================================================\n`);
     });
   }).catch(err => {
