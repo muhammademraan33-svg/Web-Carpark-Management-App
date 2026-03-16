@@ -14,12 +14,13 @@ router.get('/users', requireAuth, requireAdmin, async (req, res) => {
 router.post('/users', requireAuth, requireAdmin, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
-    const { username, password, name, email, role } = req.body;
+    const { username, password, name, email, role, active } = req.body;
     const existing = await db.prepare('SELECT id FROM users WHERE username = ?').get(username);
     if (existing) return res.status(400).json({ error: 'Username already exists' });
     const hash = bcrypt.hashSync(password, 10);
-    const result = await db.prepare(`INSERT INTO users (username, password, name, email, role, carpark_id) VALUES (?, ?, ?, ?, ?, ?)`)
-      .run(username, hash, name, email, role || 'staff', carparkId);
+    const isActive = active === true || active === 1 || active === '1';
+    const result = await db.prepare(`INSERT INTO users (username, password, name, email, role, active, carpark_id) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(username, hash, name, email, role || 'staff', isActive ? 1 : 0, carparkId);
     const user = await db.prepare('SELECT id, username, name, email, role, active FROM users WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json(user);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -27,12 +28,22 @@ router.post('/users', requireAuth, requireAdmin, async (req, res) => {
 
 router.put('/users/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { name, email, role, active, password } = req.body;
+    const { username, name, email, role, active, password } = req.body;
+    const isActive = active === true || active === 1 || active === '1';
+
+    // If username is being changed, ensure it is unique
+    if (username) {
+      const existing = await db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(username, req.params.id);
+      if (existing) return res.status(400).json({ error: 'Username already exists' });
+    }
+
     if (password) {
       const hash = bcrypt.hashSync(password, 10);
-      await db.prepare('UPDATE users SET name=?, email=?, role=?, active=?, password=? WHERE id=?').run(name, email, role, active ? 1 : 0, hash, req.params.id);
+      await db.prepare('UPDATE users SET username=?, name=?, email=?, role=?, active=?, password=? WHERE id=?')
+        .run(username, name, email, role, isActive ? 1 : 0, hash, req.params.id);
     } else {
-      await db.prepare('UPDATE users SET name=?, email=?, role=?, active=? WHERE id=?').run(name, email, role, active ? 1 : 0, req.params.id);
+      await db.prepare('UPDATE users SET username=?, name=?, email=?, role=?, active=? WHERE id=?')
+        .run(username, name, email, role, isActive ? 1 : 0, req.params.id);
     }
     const user = await db.prepare('SELECT id, username, name, email, role, active FROM users WHERE id = ?').get(req.params.id);
     res.json(user);

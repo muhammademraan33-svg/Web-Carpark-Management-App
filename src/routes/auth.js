@@ -18,7 +18,13 @@ router.post('/login', async (req, res) => {
     return res.status(400).json({ error: 'Username and password required' });
   }
 
-  const user = await db.prepare('SELECT * FROM users WHERE username = ? AND active = 1').get(username);
+  // Single shared login account only (e.g. admin)
+  const allowedUsername = process.env.SINGLE_LOGIN_USERNAME || 'admin';
+  if (username !== allowedUsername) {
+    return res.status(401).json({ error: 'Invalid username or password' });
+  }
+
+  const user = await db.prepare('SELECT * FROM users WHERE username = ? AND active = 1').get(allowedUsername);
   if (!user) return res.status(401).json({ error: 'Invalid username or password' });
 
   const valid = bcrypt.compareSync(password, user.password);
