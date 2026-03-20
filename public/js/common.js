@@ -139,10 +139,14 @@ async function logout() {
 // Calculate nights between two dates
 function calcNights(dateIn, dateOut) {
   if (!dateIn || !dateOut) return 0;
-  const d1 = new Date(dateIn);
-  const d2 = new Date(dateOut);
-  const diff = Math.round((d2 - d1) / (1000 * 60 * 60 * 24));
-  return Math.max(0, diff);
+  // Count inclusive calendar days so the drop-off day is included.
+  // Example: Mon -> Fri should be 5 (not 4).
+  const [y1, m1, day1] = dateIn.split('-').map(Number);
+  const [y2, m2, day2] = dateOut.split('-').map(Number);
+  const t1 = Date.UTC(y1, m1 - 1, day1);
+  const t2 = Date.UTC(y2, m2 - 1, day2);
+  const diffDays = Math.round((t2 - t1) / (1000 * 60 * 60 * 24));
+  return Math.max(0, diffDays + 1);
 }
 
 // Get month name
