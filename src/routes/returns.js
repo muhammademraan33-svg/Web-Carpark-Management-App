@@ -1,13 +1,15 @@
 const express = require('express');
 const { db } = require('../database');
 const { requireAuth } = require('../middleware/auth');
+const { businessDateYmd } = require('../utils/businessDate');
+const { syncKeyBoxForPickedUp } = require('../utils/keyBoxSync');
 const router = express.Router();
 
 router.get('/', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
     const { date, filter, search, search_type, show_voided } = req.query;
-    const filterDate = date || new Date().toISOString().split('T')[0];
+    const filterDate = date || businessDateYmd();
 
     let dateField = 'return_date';
     if (filter === 'date_brought_in') dateField = 'date_in';
@@ -41,8 +43,14 @@ router.get('/', requireAuth, async (req, res) => {
 
     const invoices = await db.prepare(query).all(...params);
     const groups = {}, overdue = [];
+    const ymd = (v) => {
+      if (v == null || v === '') return '';
+      const s = String(v);
+      return s.length >= 10 ? s.slice(0, 10) : s;
+    };
     invoices.forEach(inv => {
-      if (!inv.return_date || inv.return_date < filterDate) {
+      const rd = ymd(inv.return_date);
+      if (!rd || rd < filterDate) {
         overdue.push(inv);
       } else {
         const timeKey = inv.return_time || 'Unspecified';
@@ -61,12 +69,11 @@ router.post('/:id/pickup', requireAuth, async (req, res) => {
     const carparkId = req.session.carparkId || 1;
     const invoice = await db.prepare('SELECT * FROM invoices WHERE id = ? AND carpark_id = ?').get(id, carparkId);
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+    const final = picked_up || 'Picked Up';
     await db.prepare("UPDATE invoices SET picked_up = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-      .run(picked_up || 'Picked Up', id);
-    if (invoice.key_number && picked_up !== 'Car In Yard') {
-      await db.prepare("UPDATE key_box SET status = 'available', invoice_id = NULL WHERE carpark_id = ? AND key_number = ?")
-        .run(carparkId, invoice.key_number);
-    }
+      .run(final, id);
+    // Mirror Invoice save: Pick Up / not in yard → key free; In Yard → key tied to this booking again
+    await syncKeyBoxForPickedUp(db, carparkId, Number(id), invoice, final);
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

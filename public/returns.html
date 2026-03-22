@@ -20,6 +20,11 @@
       </div>
     </div>
 
+    <div class="alert alert-info small mb-3">
+      <strong>Same “today” as the menu:</strong> this page uses the server date (NZ) so it matches <strong>Returning Today</strong> on the main menu.
+      <strong>Picked up:</strong> click the green <strong>Pick Up</strong> button on a row (or open <strong>Edit</strong> → Invoice → set <strong>Picked Up</strong> in the dropdown and <strong>Save</strong>). The key box frees when status is no longer “Car In Yard”.
+    </div>
+
     <!-- Filter Bar -->
     <div class="search-bar">
       <div class="row g-2 align-items-end">
@@ -81,7 +86,10 @@
   <script>
     document.getElementById('navbar-container').innerHTML = renderNavbar('returns');
 
-    let currentDate = today();
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlDate = urlParams.get('date');
+    /** Set after /api/dashboard/stats (NZ business date = menu “Returning Today”). */
+    let currentDate = urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate) ? urlDate : today();
 
     async function loadReturns() {
       const filter = document.querySelector('input[name="dateFilter"]:checked').value;
@@ -254,6 +262,18 @@
 
     async function init() {
       await checkAuth();
+      const statsRes = await fetch('/api/dashboard/stats');
+      if (statsRes.ok) {
+        const stats = await statsRes.json();
+        if (stats.businessDate) {
+          // URL ?date=YYYY-MM-DD overrides (e.g. bookmark); otherwise match menu card
+          if (!urlDate || !/^\d{4}-\d{2}-\d{2}$/.test(urlDate)) {
+            currentDate = stats.businessDate;
+          }
+          const fd = document.getElementById('filter-date');
+          if (fd) fd.value = currentDate;
+        }
+      }
       await loadReturns();
     }
     init();

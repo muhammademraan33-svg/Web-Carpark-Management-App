@@ -1,6 +1,7 @@
 const express = require('express');
 const { db } = require('../database');
 const { requireAuth } = require('../middleware/auth');
+const { releaseKey } = require('../utils/keyBoxSync');
 const router = express.Router();
 
 router.get('/', requireAuth, async (req, res) => {
@@ -30,8 +31,7 @@ router.get('/available', requireAuth, async (req, res) => {
 router.post('/:key_number/release', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
-    await db.prepare("UPDATE key_box SET status = 'available', invoice_id = NULL WHERE carpark_id = ? AND key_number = ?")
-      .run(carparkId, parseInt(req.params.key_number));
+    await releaseKey(db, carparkId, req.params.key_number);
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

@@ -219,8 +219,9 @@
       `).join('');
       document.getElementById('recent-invoices').innerHTML = recentHtml || '<p class="text-muted small">No recent invoices</p>';
 
-      // Returning today
-      const retRes = await fetch(`/api/returns?date=${today()}`);
+      // Returning today — use same calendar date as dashboard stats (NZ business date)
+      const retDate = stats.businessDate || today();
+      const retRes = await fetch(`/api/returns?date=${encodeURIComponent(retDate)}`);
       if (retRes.ok) {
         const retData = await retRes.json();
         const allReturns = Object.values(retData.groups || {}).flat();

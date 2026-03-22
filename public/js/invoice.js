@@ -264,33 +264,66 @@ function updateNightsAndDisplay() {
   document.getElementById('time-in-display').textContent = timeIn || '--:--';
 }
 
-// ─── Rego auto-populate ───────────────────────────────────────────────────────
-// When staff enters a rego and moves away, look up the most recent invoice for
-// that rego and fill in all customer/vehicle details automatically.
-document.getElementById('inv-rego').addEventListener('blur', async () => {
+// ─── Rego / email lookup: previous invoice + long-term + on-account detection ─
+async function runCustomerLookup() {
   const rego = document.getElementById('inv-rego').value.trim();
-  if (!rego || currentInvoiceId) return; // Don't overwrite when editing existing
-
-  const res = await fetch(`/api/invoices/lookup-rego?rego=${encodeURIComponent(rego)}`);
+  if (!rego || currentInvoiceId) return;
+  const email = (document.getElementById('inv-email') && document.getElementById('inv-email').value) || '';
+  const res = await fetch(`/api/invoices/lookup-rego?rego=${encodeURIComponent(rego)}&email=${encodeURIComponent(email)}`);
   if (!res.ok) return;
-  const inv = await res.json();
-  if (!inv) return; // New customer, no history
+  const data = await res.json();
+  const inv = data.invoice;
 
-  // Only populate fields that are currently empty
-  const fill = (id, val) => { if (val && !document.getElementById(id).value) document.getElementById(id).value = val; };
-  fill('inv-last-name', inv.last_name);
-  fill('inv-first-name', inv.first_name);
-  fill('inv-phone', inv.phone);
-  fill('inv-email', inv.email);
-  if (inv.customer_id && !document.getElementById('inv-customer-id').value) {
-    document.getElementById('inv-customer-id').value = inv.customer_id;
+  if (inv) {
+    const fill = (id, val) => { if (val && !document.getElementById(id).value) document.getElementById(id).value = val; };
+    fill('inv-last-name', inv.last_name);
+    fill('inv-first-name', inv.first_name);
+    fill('inv-phone', inv.phone);
+    fill('inv-email', inv.email);
+    if (inv.customer_id && !document.getElementById('inv-customer-id').value) {
+      document.getElementById('inv-customer-id').value = inv.customer_id;
+    }
+    const alertText = inv.customer_alert || inv.customer_alert_stored;
+    if (alertText) setCustomerAlertText(alertText);
+    showAlert(`✓ Details auto-filled from previous visit (Invoice #${inv.invoice_number})`, 'info');
   }
-  // Show customer alert if any
-  const alertText = inv.customer_alert || inv.customer_alert_stored;
-  if (alertText) {
-    setCustomerAlertText(alertText);
+
+  if (data.longterm) {
+    const lt = data.longterm;
+    const rp = lt.rate_period || 'monthly';
+    showAlert(`Long-term match (${lt.lt_number} — ${lt.name}). Contract rate: $${parseFloat(lt.rate || 0).toFixed(2)} (${rp}). Adjust total if this is a casual short stay.`, 'warning');
+    const tp = document.getElementById('inv-total-price');
+    if (tp && !tp.value && lt.rate) {
+      tp.value = parseFloat(lt.rate).toFixed(2);
+      const pa = document.getElementById('inv-payment-amount');
+      if (pa && !pa.value) pa.value = parseFloat(lt.rate).toFixed(2);
+    }
   }
-  showAlert(`✓ Details auto-filled from previous visit (Invoice #${inv.invoice_number})`, 'info');
+
+  if (data.accountCustomer && !data.longterm) {
+    document.getElementById('inv-account-customer').value = data.accountCustomer.id;
+    const d = data.accountCustomer.discount_percent || 0;
+    showAlert(`On-account customer: ${data.accountCustomer.company_name}${d > 0 ? ` (${d}% discount on short-term rates)` : ''}`, 'info');
+    const nights = parseInt(document.getElementById('inv-nights').value, 10) || 1;
+    fetch(`/api/invoices/calculate-price?nights=${nights}&account_customer_id=${data.accountCustomer.id}`)
+      .then(r => r.json())
+      .then(p => {
+        if (!p || p.error) return;
+        document.getElementById('inv-total-price').value = p.total.toFixed(2);
+        document.getElementById('inv-payment-amount').value = p.total.toFixed(2);
+        document.getElementById('price-breakdown').textContent =
+          `${nights} day(s) × $${p.dailyRate}/day = $${(p.dailyRate * nights).toFixed(2)}` +
+          (p.discountPercent > 0 ? ` (${p.discountPercent}% account discount → $${p.total.toFixed(2)})` : '');
+      })
+      .catch(() => {});
+  }
+}
+
+document.getElementById('inv-rego').addEventListener('blur', () => { runCustomerLookup(); });
+
+document.getElementById('inv-email').addEventListener('blur', () => {
+  if (currentInvoiceId) return;
+  runCustomerLookup();
 });
 
 // Also trigger lookup on Enter key in rego field
@@ -348,7 +381,7 @@ document.getElementById('inv-discount-10').addEventListener('change', () => {
       if (isChecked) newTotal = newTotal * 0.9;
       document.getElementById('inv-total-price').value = newTotal.toFixed(2);
       document.getElementById('inv-payment-amount').value = newTotal.toFixed(2);
-      let b = `${nights} night(s) × $${data.dailyRate}/night = $${data.total.toFixed(2)}`;
+      let b = `${nights} day(s) × $${data.dailyRate}/day = $${data.total.toFixed(2)}`;
       if (data.discountPercent > 0) b += ` (${data.discountPercent}% account discount)`;
       if (isChecked) b += ` → -10% = $${newTotal.toFixed(2)}`;
       document.getElementById('price-breakdown').textContent = b;
@@ -397,7 +430,7 @@ document.getElementById('btn-calculate').addEventListener('click', async () => {
 
   document.getElementById('inv-total-price').value = total.toFixed(2);
   document.getElementById('inv-payment-amount').value = total.toFixed(2);
-  let breakdown = `${nights} night(s) × $${data.dailyRate}/night = $${data.total.toFixed(2)}`;
+  let breakdown = `${nights} day(s) × $${data.dailyRate}/day = $${data.total.toFixed(2)}`;
   if (data.discountPercent > 0) breakdown += ` (${data.discountPercent}% account discount applied)`;
   if (document.getElementById('inv-discount-10').checked) breakdown += ` (-10% discount)`;
   document.getElementById('price-breakdown').textContent = breakdown;

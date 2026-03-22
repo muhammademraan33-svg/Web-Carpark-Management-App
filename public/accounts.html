@@ -17,12 +17,18 @@
       <button class="btn btn-success" id="btn-new-acct"><i class="bi bi-plus-lg me-1"></i>New Account</button>
     </div>
 
+    <div class="alert alert-secondary small mb-3">
+      <strong>On-account / rego:</strong> Company accounts are matched on the <strong>Invoice</strong> page by <strong>vehicle rego</strong> (Rego 1 / Rego 2 below) and/or by <strong>billing email</strong>.
+      Enter the rego(s) used by that company’s vehicles so the system can auto-detect and apply the account discount when you type the rego on a new invoice.
+    </div>
+
     <div class="table-container">
       <div class="table-responsive">
         <table class="table table-hover">
           <thead>
             <tr>
               <th>Company</th>
+              <th>Rego 1 / 2</th>
               <th>Contact</th>
               <th>Phone</th>
               <th>Billing Email</th>
@@ -32,7 +38,7 @@
             </tr>
           </thead>
           <tbody id="accounts-tbody">
-            <tr><td colspan="7" class="text-center"><div class="spinner-border spinner-border-sm"></div></td></tr>
+            <tr><td colspan="8" class="text-center"><div class="spinner-border spinner-border-sm"></div></td></tr>
           </tbody>
         </table>
       </div>
@@ -106,6 +112,14 @@
               <input type="email" class="form-control" id="acct-billing-email">
             </div>
             <div class="col-md-4">
+              <label class="form-label">Vehicle Rego 1 <small class="text-muted">(for invoice auto-detect)</small></label>
+              <input type="text" class="form-control text-uppercase" id="acct-rego1" placeholder="ABC123">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Vehicle Rego 2 <small class="text-muted">(optional)</small></label>
+              <input type="text" class="form-control text-uppercase" id="acct-rego2" placeholder="Second vehicle">
+            </div>
+            <div class="col-md-4">
               <label class="form-label">Discount %</label>
               <input type="number" step="0.1" class="form-control" id="acct-discount" value="0">
             </div>
@@ -152,13 +166,14 @@
       const tbody = document.getElementById('accounts-tbody');
 
       if (accounts.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No account customers yet</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No account customers yet</td></tr>';
         return;
       }
 
       tbody.innerHTML = accounts.map(a => `
         <tr>
           <td class="fw-bold">${a.company_name}</td>
+          <td class="small">${[a.rego_1, a.rego_2].filter(Boolean).join(' / ') || '—'}</td>
           <td>${a.contact_name||''}</td>
           <td>${a.phone||''}</td>
           <td>${a.billing_email||a.email||''}</td>
@@ -192,6 +207,8 @@
       document.getElementById('acct-phone').value = a.phone||'';
       document.getElementById('acct-email').value = a.email||'';
       document.getElementById('acct-billing-email').value = a.billing_email||'';
+      document.getElementById('acct-rego1').value = a.rego_1||'';
+      document.getElementById('acct-rego2').value = a.rego_2||'';
       document.getElementById('acct-discount').value = a.discount_percent||0;
       document.getElementById('acct-payment-link').value = a.payment_link||'';
       document.getElementById('acct-credit').value = a.credit_balance||0;
@@ -265,6 +282,8 @@
       document.getElementById('acct-phone').value = '';
       document.getElementById('acct-email').value = '';
       document.getElementById('acct-billing-email').value = '';
+      document.getElementById('acct-rego1').value = '';
+      document.getElementById('acct-rego2').value = '';
       document.getElementById('acct-discount').value = '0';
       document.getElementById('acct-payment-link').value = '';
       document.getElementById('acct-credit').value = '0';
@@ -284,7 +303,9 @@
         discount_percent: document.getElementById('acct-discount').value,
         payment_link: document.getElementById('acct-payment-link').value,
         credit_balance: document.getElementById('acct-credit').value,
-        notes: document.getElementById('acct-notes').value
+        notes: document.getElementById('acct-notes').value,
+        rego_1: document.getElementById('acct-rego1').value.trim() || null,
+        rego_2: document.getElementById('acct-rego2').value.trim() || null
       };
 
       if (!payload.company_name) { showAlert('Company name required', 'danger'); return; }

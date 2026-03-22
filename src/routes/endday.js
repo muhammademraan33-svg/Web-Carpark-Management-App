@@ -1,12 +1,13 @@
 const express = require('express');
 const { db } = require('../database');
 const { requireAuth } = require('../middleware/auth');
+const { businessDateYmd } = require('../utils/businessDate');
 const router = express.Router();
 
 router.get('/', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
-    const today = req.query.date || new Date().toISOString().split('T')[0];
+    const today = req.query.date || businessDateYmd();
     const stats = await db.prepare(`
       SELECT
         COUNT(CASE WHEN DATE(date_in) = ? THEN 1 END) as cars_in,
@@ -29,7 +30,7 @@ router.post('/', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
     const { date, notes } = req.body;
-    const today = date || new Date().toISOString().split('T')[0];
+    const today = date || businessDateYmd();
     const stats = await db.prepare(`
       SELECT
         COUNT(CASE WHEN DATE(date_in) = ? THEN 1 END) as cars_in,

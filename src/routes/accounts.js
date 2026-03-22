@@ -38,9 +38,9 @@ router.get('/:id/statement', requireAuth, async (req, res) => {
 router.post('/', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
-    const { company_name, contact_name, phone, email, billing_email, payment_link, discount_percent, notes } = req.body;
-    const result = await db.prepare(`INSERT INTO account_customers (company_name, contact_name, phone, email, billing_email, payment_link, discount_percent, notes, carpark_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(company_name, contact_name, phone, email, billing_email, payment_link || '', discount_percent || 0, notes, carparkId);
+    const { company_name, contact_name, phone, email, billing_email, payment_link, discount_percent, notes, rego_1, rego_2 } = req.body;
+    const result = await db.prepare(`INSERT INTO account_customers (company_name, contact_name, phone, email, billing_email, payment_link, discount_percent, notes, rego_1, rego_2, carpark_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(company_name, contact_name, phone, email, billing_email, payment_link || '', discount_percent || 0, notes, rego_1 || null, rego_2 || null, carparkId);
     const account = await db.prepare('SELECT * FROM account_customers WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json(account);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -48,9 +48,9 @@ router.post('/', requireAuth, async (req, res) => {
 
 router.put('/:id', requireAuth, async (req, res) => {
   try {
-    const { company_name, contact_name, phone, email, billing_email, payment_link, discount_percent, credit_balance, notes } = req.body;
-    await db.prepare(`UPDATE account_customers SET company_name=?, contact_name=?, phone=?, email=?, billing_email=?, payment_link=?, discount_percent=?, credit_balance=?, notes=? WHERE id = ?`)
-      .run(company_name, contact_name, phone, email, billing_email, payment_link || '', discount_percent || 0, credit_balance || 0, notes, req.params.id);
+    const { company_name, contact_name, phone, email, billing_email, payment_link, discount_percent, credit_balance, notes, rego_1, rego_2 } = req.body;
+    await db.prepare(`UPDATE account_customers SET company_name=?, contact_name=?, phone=?, email=?, billing_email=?, payment_link=?, discount_percent=?, credit_balance=?, notes=?, rego_1=?, rego_2=? WHERE id = ?`)
+      .run(company_name, contact_name, phone, email, billing_email, payment_link || '', discount_percent || 0, credit_balance || 0, notes, rego_1 || null, rego_2 || null, req.params.id);
     const account = await db.prepare('SELECT * FROM account_customers WHERE id = ?').get(req.params.id);
     res.json(account);
   } catch (err) { res.status(500).json({ error: err.message }); }

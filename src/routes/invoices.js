@@ -1,6 +1,7 @@
 const express = require('express');
 const { db } = require('../database');
 const { requireAuth } = require('../middleware/auth');
+const { releaseKey, syncKeyBoxForPickedUp } = require('../utils/keyBoxSync');
 const PDFDocument = require('pdfkit');
 const router = express.Router();
 
@@ -32,16 +33,50 @@ router.get('/calculate-price', requireAuth, async (req, res) => {
 router.get('/lookup-rego', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
-    const { rego } = req.query;
-    if (!rego) return res.json(null);
+    const { rego, email: emailQuery } = req.query;
+    if (!rego) return res.json({ invoice: null, longterm: null, accountCustomer: null });
+    const r = rego.trim();
     const invoice = await db.prepare(`
       SELECT i.*, c.alert_message as customer_alert_stored
       FROM invoices i
       LEFT JOIN customers c ON i.customer_id = c.id
       WHERE i.carpark_id = ? AND UPPER(i.rego) = UPPER(?) AND i.void = 0
       ORDER BY i.created_at DESC LIMIT 1
-    `).get(carparkId, rego.trim());
-    res.json(invoice || null);
+    `).get(carparkId, r);
+
+    const longterm = await db.prepare(`
+      SELECT * FROM longterm_customers
+      WHERE carpark_id = ? AND active = 1
+        AND (UPPER(TRIM(COALESCE(rego_1,''))) = UPPER(?) OR UPPER(TRIM(COALESCE(rego_2,''))) = UPPER(?))
+      LIMIT 1
+    `).get(carparkId, r, r);
+
+    let accountCustomer = null;
+    accountCustomer = await db.prepare(`
+      SELECT * FROM account_customers
+      WHERE carpark_id = ? AND active = 1
+        AND (UPPER(TRIM(COALESCE(rego_1,''))) = UPPER(?) OR UPPER(TRIM(COALESCE(rego_2,''))) = UPPER(?))
+      LIMIT 1
+    `).get(carparkId, r, r);
+
+    const email = (invoice && invoice.email)
+      ? String(invoice.email).trim()
+      : (emailQuery ? String(emailQuery).trim() : '');
+    if (!accountCustomer && email) {
+      accountCustomer = await db.prepare(`
+        SELECT * FROM account_customers
+        WHERE carpark_id = ? AND active = 1
+          AND (LOWER(TRIM(COALESCE(email,''))) = LOWER(?)
+               OR LOWER(TRIM(COALESCE(billing_email,''))) = LOWER(?))
+        LIMIT 1
+      `).get(carparkId, email, email);
+    }
+
+    res.json({
+      invoice: invoice || null,
+      longterm: longterm || null,
+      accountCustomer: accountCustomer || null
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -115,6 +150,8 @@ router.post('/', requireAuth, async (req, res) => {
     const existing = await db.prepare('SELECT id FROM invoices WHERE invoice_number = ? AND carpark_id = ?').get(invoice_number, carparkId);
     if (existing) return res.status(400).json({ error: 'Invoice number already exists' });
 
+    const finalPickedUp = picked_up || 'Car In Yard';
+
     const result = await db.prepare(`
       INSERT INTO invoices (
         invoice_number, carpark_id, customer_id, account_customer_id, key_number, no_key,
@@ -131,13 +168,13 @@ router.post('/', requireAuth, async (req, res) => {
       flight_info, flight_type || 'Standard - On Flight', total_price || 0, credit_applied || 0, discount_percent || 0,
       paid_status || 'To Pay', payment_amount || 0, payment_method,
       paid_status_2 || null, payment_amount_2 || 0, payment_method_2 || null,
-      do_not_move ? 1 : 0, picked_up || 'Car In Yard', staff_id || req.session.userId, notes, customer_alert
+      do_not_move ? 1 : 0, finalPickedUp, staff_id || req.session.userId, notes, customer_alert
     );
 
-    if (key_number && !no_key) {
-      await db.prepare("UPDATE key_box SET status = 'in_use', invoice_id = ? WHERE carpark_id = ? AND key_number = ?")
-        .run(result.lastInsertRowid, carparkId, parseInt(key_number));
-    }
+    await syncKeyBoxForPickedUp(db, carparkId, result.lastInsertRowid, {
+      key_number,
+      no_key: no_key ? 1 : 0
+    }, finalPickedUp);
 
     const newInvoice = await db.prepare('SELECT * FROM invoices WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json(newInvoice);
@@ -162,9 +199,10 @@ router.put('/:id', requireAuth, async (req, res) => {
 
     // Release old key if changed
     if (existing.key_number && existing.key_number != key_number) {
-      await db.prepare("UPDATE key_box SET status = 'available', invoice_id = NULL WHERE carpark_id = ? AND key_number = ?")
-        .run(carparkId, existing.key_number);
+      await releaseKey(db, carparkId, existing.key_number);
     }
+
+    const finalPickedUp = picked_up || 'Car In Yard';
 
     await db.prepare(`
       UPDATE invoices SET
@@ -182,14 +220,14 @@ router.put('/:id', requireAuth, async (req, res) => {
       stay_nights || 0, flight_info, flight_type || 'Standard - On Flight', total_price || 0,
       credit_applied || 0, discount_percent || 0, paid_status || 'To Pay', payment_amount || 0,
       payment_method, paid_status_2 || null, payment_amount_2 || 0, payment_method_2 || null,
-      do_not_move ? 1 : 0, picked_up || 'Car In Yard', staff_id || req.session.userId, notes, customer_alert,
+      do_not_move ? 1 : 0, finalPickedUp, staff_id || req.session.userId, notes, customer_alert,
       account_customer_id || null, id, carparkId
     );
 
-    if (key_number && !no_key) {
-      await db.prepare("UPDATE key_box SET status = 'in_use', invoice_id = ? WHERE carpark_id = ? AND key_number = ?")
-        .run(id, carparkId, parseInt(key_number));
-    }
+    await syncKeyBoxForPickedUp(db, carparkId, id, {
+      key_number,
+      no_key: no_key ? 1 : 0
+    }, finalPickedUp);
 
     const updated = await db.prepare('SELECT * FROM invoices WHERE id = ?').get(id);
     res.json(updated);
@@ -205,8 +243,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
     // Release key so it becomes available again
     if (invoice.key_number && !invoice.no_key) {
-      await db.prepare("UPDATE key_box SET status = 'available', invoice_id = NULL WHERE carpark_id = ? AND key_number = ?")
-        .run(carparkId, parseInt(invoice.key_number));
+      await releaseKey(db, carparkId, invoice.key_number);
     }
     await db.prepare('DELETE FROM invoices WHERE id = ?').run(id);
     res.json({ success: true });
@@ -222,8 +259,7 @@ router.post('/:id/void', requireAuth, async (req, res) => {
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
     await db.prepare("UPDATE invoices SET void = 1, picked_up = 'Voided', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
     if (invoice.key_number) {
-      await db.prepare("UPDATE key_box SET status = 'available', invoice_id = NULL WHERE carpark_id = ? AND key_number = ?")
-        .run(carparkId, parseInt(invoice.key_number));
+      await releaseKey(db, carparkId, invoice.key_number);
     }
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }

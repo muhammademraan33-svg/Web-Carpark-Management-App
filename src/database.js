@@ -239,6 +239,10 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
+  ['rego_1', 'rego_2'].forEach((col) => {
+    try { x(`ALTER TABLE account_customers ADD COLUMN ${col} TEXT`); } catch (_) {}
+  });
+
   x(`CREATE TABLE IF NOT EXISTS pricing_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     carpark_id INTEGER DEFAULT 1,
