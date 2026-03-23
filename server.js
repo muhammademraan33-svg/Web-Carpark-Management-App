@@ -144,8 +144,8 @@ cron.schedule('0 8 20 * *', async () => {
         port:   parseInt(process.env.SMTP_PORT || '587'),
         secure: process.env.SMTP_SECURE === 'true',
         auth:   {
-          user: process.env.SMTP_USER || 'videofootage0@gmail.com',
-          pass: process.env.SMTP_PASS || 'rhyb tdsd gpdp kyhg'
+          user: process.env.SMTP_USER || 'boicarparkkerikeri@gmail.com',
+          pass: process.env.SMTP_PASS || 'tney tgfn erxi mkny'
         }
       });
 
@@ -184,7 +184,7 @@ cron.schedule('0 8 20 * *', async () => {
 
         try {
           await transporter.sendMail({
-            from: process.env.EMAIL_FROM || `BOI Car Storage <videofootage0@gmail.com>`,
+            from: process.env.EMAIL_FROM || `BOI Car Storage <boicarparkkerikeri@gmail.com>`,
             to:   emailTo,
             subject: `${carpark.name} - ${monthName} ${year} Account Statement`,
             html

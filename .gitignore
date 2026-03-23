@@ -19,3 +19,8 @@ test_cookies.txt
 # Misc
 nul
 *.log
+
+# Temporary DB migration artifacts
+carpark-old*
+carpark-b64-*
+export-old.err

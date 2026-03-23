@@ -6,8 +6,8 @@ const router = express.Router();
 
 // Hard-code the provided Gmail fallback so the deployed app works without
 // the owner needing to set Vercel env vars for SMTP.
-const SMTP_USER_DEFAULT = 'videofootage0@gmail.com';
-const SMTP_PASS_DEFAULT = 'rhyb tdsd gpdp kyhg';
+const SMTP_USER_DEFAULT = 'boicarparkkerikeri@gmail.com';
+const SMTP_PASS_DEFAULT = 'tney tgfn erxi mkny';
 const SMTP_FROM_DEFAULT = `BOI Car Storage <${SMTP_USER_DEFAULT}>`;
 
 function getTransporter() {
