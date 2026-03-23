@@ -5,6 +5,7 @@ let currentInvoiceId = null;
 let staffList = [];
 let accountCustomers = [];
 let _saving = false; // guard against concurrent saves / race conditions
+let paymentLockReason = ''; // when set, PAID STATUS is hard-locked to OnAcc
 
 // ─── Customer alert helpers (robust if elements missing) ──────────────────────
 function getCustomerAlertElement() {
@@ -122,6 +123,7 @@ document.getElementById('inv-flight-arrival-select').addEventListener('change', 
 });
 
 async function newInvoice() {
+  clearOnAccountPaymentLock();
   // Get next invoice number
   const res = await fetch('/api/invoices/next-number');
   if (res.ok) {
@@ -173,6 +175,7 @@ async function newInvoice() {
 }
 
 async function loadInvoice(invoiceNumber, invoiceId) {
+  clearOnAccountPaymentLock();
   let url = invoiceId ? `/api/invoices/${invoiceId}` : `/api/invoices?search=${invoiceNumber}`;
   const res = await fetch(url);
   if (!res.ok) { showAlert('Invoice not found', 'danger'); return; }
@@ -241,6 +244,10 @@ async function loadInvoice(invoiceNumber, invoiceId) {
     setCustomerAlertText(inv.customer_alert);
   }
 
+  if ((inv.account_customer_id || inv.paid_status === 'OnAcc') && !inv.void) {
+    setOnAccountPaymentLock(inv.account_customer_id ? 'On Account' : 'Long Term');
+  }
+
   updateNightsAndDisplay();
   document.getElementById('inv-status-badge').innerHTML = inv.void
     ? `<span class="badge bg-secondary">VOIDED</span>`
@@ -264,10 +271,48 @@ function updateNightsAndDisplay() {
   document.getElementById('time-in-display').textContent = timeIn || '--:--';
 }
 
+function setOnAccountPaymentLock(reasonLabel) {
+  paymentLockReason = reasonLabel || 'On Account';
+  const paidStatus = document.getElementById('inv-paid-status');
+  const splitToggle = document.getElementById('split-payment-toggle');
+  const paidStatus2 = document.getElementById('inv-paid-status-2');
+  const payment2 = document.getElementById('inv-payment-amount-2');
+
+  const total = parseFloat(document.getElementById('inv-total-price').value) || 0;
+  paidStatus.value = 'OnAcc';
+  paidStatus.disabled = true; // hard lock: no Eftpos/Cash while detected
+  document.getElementById('inv-payment-amount').value = total > 0 ? total.toFixed(2) : '';
+  // Single on-account line by default.
+  splitToggle.checked = false;
+  splitToggle.disabled = true;
+  document.getElementById('payment2-section').classList.add('d-none');
+  paidStatus2.value = '';
+  paidStatus2.disabled = true;
+  payment2.value = '';
+  payment2.disabled = true;
+  if (reasonLabel) showAlert(`Payment auto-set to On Account (${reasonLabel})`, 'info');
+}
+
+function clearOnAccountPaymentLock() {
+  paymentLockReason = '';
+  const paidStatus = document.getElementById('inv-paid-status');
+  const splitToggle = document.getElementById('split-payment-toggle');
+  const paidStatus2 = document.getElementById('inv-paid-status-2');
+  const payment2 = document.getElementById('inv-payment-amount-2');
+  paidStatus.disabled = false;
+  splitToggle.disabled = false;
+  paidStatus2.disabled = false;
+  payment2.disabled = false;
+}
+
 // ─── Rego / email lookup: previous invoice + long-term + on-account detection ─
 async function runCustomerLookup() {
   const rego = document.getElementById('inv-rego').value.trim();
-  if (!rego || currentInvoiceId) return;
+  if (currentInvoiceId) return;
+  if (!rego) {
+    if (!document.getElementById('inv-account-customer').value) clearOnAccountPaymentLock();
+    return;
+  }
   const email = (document.getElementById('inv-email') && document.getElementById('inv-email').value) || '';
   const res = await fetch(`/api/invoices/lookup-rego?rego=${encodeURIComponent(rego)}&email=${encodeURIComponent(email)}`);
   if (!res.ok) return;
@@ -298,6 +343,7 @@ async function runCustomerLookup() {
       const pa = document.getElementById('inv-payment-amount');
       if (pa && !pa.value) pa.value = parseFloat(lt.rate).toFixed(2);
     }
+    setOnAccountPaymentLock('Long Term');
   }
 
   if (data.accountCustomer && !data.longterm) {
@@ -314,8 +360,11 @@ async function runCustomerLookup() {
         document.getElementById('price-breakdown').textContent =
           `${nights} day(s) × $${p.dailyRate}/day = $${(p.dailyRate * nights).toFixed(2)}` +
           (p.discountPercent > 0 ? ` (${p.discountPercent}% account discount → $${p.total.toFixed(2)})` : '');
+        setOnAccountPaymentLock('On Account');
       })
       .catch(() => {});
+  } else if (!data.longterm && !data.accountCustomer && !document.getElementById('inv-account-customer').value) {
+    clearOnAccountPaymentLock();
   }
 }
 
@@ -329,6 +378,15 @@ document.getElementById('inv-email').addEventListener('blur', () => {
 // Also trigger lookup on Enter key in rego field
 document.getElementById('inv-rego').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); document.getElementById('inv-rego').blur(); }
+});
+
+document.getElementById('inv-account-customer').addEventListener('change', () => {
+  if (currentInvoiceId) return;
+  if (!document.getElementById('inv-account-customer').value) {
+    clearOnAccountPaymentLock();
+    return;
+  }
+  setOnAccountPaymentLock('On Account');
 });
 
 // ─── Event listeners ──────────────────────────────────────────────────────────
@@ -354,6 +412,11 @@ document.getElementById('btn-next-date').addEventListener('click', () => {
 });
 
 document.getElementById('split-payment-toggle').addEventListener('change', (e) => {
+  if (paymentLockReason) {
+    e.target.checked = false;
+    document.getElementById('payment2-section').classList.add('d-none');
+    return;
+  }
   document.getElementById('payment2-section').classList.toggle('d-none', !e.target.checked);
 });
 
