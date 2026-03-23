@@ -3,14 +3,39 @@ const { db } = require('../database');
 const { requireAuth } = require('../middleware/auth');
 const router = express.Router();
 
+function ymdToday() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function daysBetweenYmd(fromYmd, toYmd) {
+  if (!fromYmd || !toYmd) return null;
+  const a = new Date(`${fromYmd}T00:00:00Z`);
+  const b = new Date(`${toYmd}T00:00:00Z`);
+  const ms = b.getTime() - a.getTime();
+  return Math.floor(ms / (24 * 60 * 60 * 1000));
+}
+
+function withRenewalStatus(row, todayYmd) {
+  const expiry = row.expiry_date ? String(row.expiry_date).slice(0, 10) : null;
+  if (!expiry) {
+    return { ...row, expiry_date: null, renewal_status: 'no_expiry', days_to_expiry: null };
+  }
+  const days = daysBetweenYmd(todayYmd, expiry);
+  let renewal = 'active';
+  if (days < 0) renewal = 'expired';
+  else if (days <= 30) renewal = 'due_soon';
+  return { ...row, expiry_date: expiry, renewal_status: renewal, days_to_expiry: days };
+}
+
 router.get('/', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
+    const today = ymdToday();
     const customers = await db.prepare(`
       SELECT * FROM longterm_customers WHERE carpark_id = ? AND active = 1
       ORDER BY CAST(REPLACE(lt_number, 'LT', '') AS INTEGER)
     `).all(carparkId);
-    res.json(customers);
+    res.json(customers.map(c => withRenewalStatus(c, today)));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -45,7 +70,7 @@ router.get('/:id', requireAuth, async (req, res) => {
   try {
     const customer = await db.prepare('SELECT * FROM longterm_customers WHERE id = ?').get(req.params.id);
     if (!customer) return res.status(404).json({ error: 'Not found' });
-    res.json(customer);
+    res.json(withRenewalStatus(customer, ymdToday()));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

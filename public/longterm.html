@@ -19,6 +19,10 @@
       </button>
     </div>
 
+    <div id="renewal-summary" class="alert alert-info small mb-3">
+      Checking renewal dates...
+    </div>
+
     <!-- Column headers -->
     <div class="row g-2 mb-2 px-1">
       <div class="col-6">
@@ -100,6 +104,15 @@
               <input type="date" class="form-control" id="lt-expiry">
             </div>
             <div class="col-md-8">
+              <label class="form-label">Contract Term</label>
+              <div class="d-flex gap-2">
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-term-3m">+3 Months</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-term-6m">+6 Months</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-term-12m">+12 Months</button>
+              </div>
+              <div class="small text-muted mt-1">Use these buttons to auto-set expiry from today (or renew quickly).</div>
+            </div>
+            <div class="col-md-8">
               <label class="form-label">Notes</label>
               <input type="text" class="form-control" id="lt-notes" placeholder="Notes...">
             </div>
@@ -121,10 +134,50 @@
   <script>
     document.getElementById('navbar-container').innerHTML = renderNavbar('longterm');
 
+    function addMonthsYmd(ymd, months) {
+      const base = ymd ? new Date(`${ymd}T00:00:00`) : new Date();
+      const d = new Date(base);
+      d.setMonth(d.getMonth() + months);
+      return localDateStr(d);
+    }
+
+    function renewalBadge(c) {
+      if (c.renewal_status === 'expired') {
+        return `<span class="badge bg-danger ms-2">Expired ${Math.abs(c.days_to_expiry)}d</span>`;
+      }
+      if (c.renewal_status === 'due_soon') {
+        return `<span class="badge bg-warning text-dark ms-2">Due in ${c.days_to_expiry}d</span>`;
+      }
+      if (c.renewal_status === 'active') {
+        return `<span class="badge bg-success-subtle text-success-emphasis ms-2">Active (${c.days_to_expiry}d)</span>`;
+      }
+      return `<span class="badge bg-secondary-subtle text-secondary-emphasis ms-2">No expiry</span>`;
+    }
+
+    function renderRenewalSummary(customers) {
+      const expired = customers.filter(c => c.renewal_status === 'expired').length;
+      const dueSoon = customers.filter(c => c.renewal_status === 'due_soon').length;
+      const noExpiry = customers.filter(c => c.renewal_status === 'no_expiry').length;
+      const el = document.getElementById('renewal-summary');
+      if (!el) return;
+      let cls = 'alert-info';
+      if (expired > 0) cls = 'alert-danger';
+      else if (dueSoon > 0) cls = 'alert-warning';
+      el.className = `alert ${cls} small mb-3`;
+      el.innerHTML = `
+        <strong>Renewals:</strong>
+        ${expired} expired,
+        ${dueSoon} due in 30 days,
+        ${noExpiry} with no expiry date.
+        <span class="ms-2 text-muted">Tip: open customer → set +3 / +6 / +12 months.</span>
+      `;
+    }
+
     async function loadLongTerm() {
       const res = await fetch('/api/longterm');
       if (!res.ok) return;
       const customers = await res.json();
+      renderRenewalSummary(customers);
 
       if (customers.length === 0) {
         document.getElementById('lt-grid').innerHTML = '<div class="col-12 text-center text-muted py-4">No long term customers yet.</div>';
@@ -141,6 +194,7 @@
           <div class="lt-card mb-2">
             <div class="lt-number">${c.lt_number}</div>
             <div class="lt-name" style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${c.name}">${c.name}</div>
+            ${renewalBadge(c)}
             ${c.rego_1 ? `<span class="lt-rego">${c.rego_1}</span>` : '<span class="lt-rego text-muted">—</span>'}
             ${c.rego_2 ? `<span class="lt-rego">${c.rego_2}</span>` : '<span class="lt-rego text-muted" style="opacity:0.3;">—</span>'}
             <div class="small text-muted" style="min-width:90px;">${c.phone||''}</div>
@@ -212,10 +266,20 @@
       document.getElementById('lt-email').value = '';
       document.getElementById('lt-rate').value = '120.00';
       document.getElementById('lt-rate-period').value = 'monthly';
-      document.getElementById('lt-expiry').value = '';
+      document.getElementById('lt-expiry').value = addMonthsYmd(localDateStr(new Date()), 3);
       document.getElementById('lt-notes').value = '';
       document.getElementById('btn-delete-lt').style.display = 'none';
       new bootstrap.Modal('#ltModal').show();
+    });
+
+    document.getElementById('btn-term-3m').addEventListener('click', () => {
+      document.getElementById('lt-expiry').value = addMonthsYmd(localDateStr(new Date()), 3);
+    });
+    document.getElementById('btn-term-6m').addEventListener('click', () => {
+      document.getElementById('lt-expiry').value = addMonthsYmd(localDateStr(new Date()), 6);
+    });
+    document.getElementById('btn-term-12m').addEventListener('click', () => {
+      document.getElementById('lt-expiry').value = addMonthsYmd(localDateStr(new Date()), 12);
     });
 
     document.getElementById('btn-save-lt').addEventListener('click', async () => {
