@@ -119,6 +119,9 @@ async function loadFlightsForDate(dateStr) {
 
 document.getElementById('inv-flight-arrival-select').addEventListener('change', (e) => {
   if (e.target.value) {
+    const tbc = document.getElementById('inv-return-time-tbc');
+    if (tbc) tbc.checked = false;
+    document.getElementById('inv-return-time').disabled = false;
     document.getElementById('inv-return-time').value = e.target.value;
     e.target.value = '';
   }
@@ -165,6 +168,8 @@ async function newInvoice() {
   // Default return: tomorrow
   document.getElementById('inv-return-date').value = addDays(localDateStr(now), 1);
   document.getElementById('inv-return-time').value = '14:35';
+  document.getElementById('inv-return-time-tbc').checked = false;
+  document.getElementById('inv-return-time').disabled = false;
 
   updateNightsAndDisplay();
   document.getElementById('inv-status-badge').innerHTML = `<span class="badge bg-warning text-dark">UNSAVED</span>`;
@@ -217,7 +222,15 @@ async function loadInvoice(invoiceNumber, invoiceId) {
   if (inv.date_in) document.getElementById('inv-date-in').value = inv.date_in.split('T')[0];
   if (inv.time_in) document.getElementById('inv-time-in').value = inv.time_in;
   if (inv.return_date) document.getElementById('inv-return-date').value = inv.return_date.split('T')[0];
-  if (inv.return_time) document.getElementById('inv-return-time').value = inv.return_time;
+  if (inv.return_time) {
+    document.getElementById('inv-return-time').value = inv.return_time;
+    document.getElementById('inv-return-time-tbc').checked = false;
+    document.getElementById('inv-return-time').disabled = false;
+  } else {
+    document.getElementById('inv-return-time').value = '';
+    document.getElementById('inv-return-time-tbc').checked = true;
+    document.getElementById('inv-return-time').disabled = true;
+  }
 
   // Key
   if (inv.no_key) {
@@ -529,6 +542,12 @@ document.getElementById('inv-return-date').addEventListener('change', () => {
   loadFlightsForDate(document.getElementById('inv-return-date').value);
 });
 document.getElementById('inv-time-in').addEventListener('change', updateNightsAndDisplay);
+document.getElementById('inv-return-time-tbc').addEventListener('change', (e) => {
+  const t = document.getElementById('inv-return-time');
+  t.disabled = e.target.checked;
+  if (e.target.checked) t.value = '';
+  else if (!t.value) t.value = '14:35';
+});
 
 document.getElementById('btn-prev-date').addEventListener('click', () => {
   const cur = document.getElementById('inv-return-date').value || today();
@@ -692,6 +711,17 @@ document.getElementById('btn-search-customer').addEventListener('click', async (
   });
 });
 
+document.getElementById('btn-search-invoice').addEventListener('click', async () => {
+  const invNo = parseInt(document.getElementById('invoice-search-number').value, 10);
+  if (!invNo) { showAlert('Enter an invoice number', 'warning'); return; }
+  await loadInvoice(invNo, null);
+});
+document.getElementById('invoice-search-number').addEventListener('keypress', async (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  document.getElementById('btn-search-invoice').click();
+});
+
 document.getElementById('customer-search').addEventListener('keypress', (e) => {
   if (e.key === 'Enter') document.getElementById('btn-search-customer').click();
 });
@@ -739,7 +769,7 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
     date_in: document.getElementById('inv-date-in').value,
     time_in: document.getElementById('inv-time-in').value,
     return_date: document.getElementById('inv-return-date').value,
-    return_time: document.getElementById('inv-return-time').value,
+    return_time: document.getElementById('inv-return-time-tbc').checked ? null : document.getElementById('inv-return-time').value,
     stay_nights: document.getElementById('inv-nights').value,
     flight_info: document.getElementById('inv-flight-info').value,
     flight_type: document.getElementById('inv-flight-type').value,

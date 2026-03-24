@@ -34,6 +34,15 @@
           <input type="text" class="form-control" id="customer-search" placeholder="Last name or first name...">
         </div>
         <div class="col-md-2">
+          <label class="form-label">Find Invoice #</label>
+          <input type="number" class="form-control" id="invoice-search-number" placeholder="e.g. 19025">
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-outline-primary w-100" id="btn-search-invoice">
+            <i class="bi bi-receipt-cutoff"></i> Open Invoice
+          </button>
+        </div>
+        <div class="col-md-2">
           <button class="btn btn-success w-100" id="btn-search-customer">
             <i class="bi bi-search"></i> Search By Name
           </button>
@@ -143,6 +152,10 @@
                   <option value="">✈ Loading flights…</option>
                 </select>
                 <input type="time" class="form-control" id="inv-return-time" value="14:35">
+                <div class="form-check mt-1">
+                  <input class="form-check-input" type="checkbox" id="inv-return-time-tbc">
+                  <label class="form-check-label small" for="inv-return-time-tbc">Return time to be confirmed</label>
+                </div>
               </div>
               <div class="col-md-4">
                 <label class="form-label">On Account</label>

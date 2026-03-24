@@ -232,7 +232,9 @@
               <span class="text-muted ms-1">${inv.rego||''}</span>
             </div>
             <div class="d-flex align-items-center gap-2">
-              <span class="small text-muted">${inv.return_time||''}</span>
+              ${inv.return_time
+                ? `<span class="small text-muted">${inv.return_time}</span>`
+                : '<span class="badge bg-secondary-subtle text-secondary-emphasis">TBC</span>'}
               ${statusBadge(inv.paid_status)}
               <a href="/invoice.html?id=${inv.id}" class="btn btn-action btn-outline-secondary">View</a>
             </div>

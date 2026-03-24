@@ -55,6 +55,11 @@
           </div>
         </div>
         <div class="col-auto d-flex gap-2">
+          <select class="form-select form-select-sm" id="return-time-filter" style="width:130px;">
+            <option value="all">All Times</option>
+            <option value="tbc">TBC Only</option>
+            <option value="timed">Timed Only</option>
+          </select>
           <select class="form-select form-select-sm" id="search-type" style="width:130px;">
             <option value="">Invoice No</option>
             <option value="name">Name</option>
@@ -88,14 +93,28 @@
 
     const urlParams = new URLSearchParams(window.location.search);
     const urlDate = urlParams.get('date');
+    const urlTimeFilter = urlParams.get('time_filter');
     /** Set after /api/dashboard/stats (NZ business date = menu “Returning Today”). */
     let currentDate = urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate) ? urlDate : today();
+
+    function isTbcReturnTime(car) {
+      return !car || !car.return_time || !String(car.return_time).trim();
+    }
+
+    function filterCarsByReturnTime(cars) {
+      const mode = document.getElementById('return-time-filter')?.value || 'all';
+      if (!cars || mode === 'all') return cars || [];
+      if (mode === 'tbc') return cars.filter(isTbcReturnTime);
+      if (mode === 'timed') return cars.filter(c => !isTbcReturnTime(c));
+      return cars;
+    }
 
     async function loadReturns() {
       const filter = document.querySelector('input[name="dateFilter"]:checked').value;
       const search = document.getElementById('search-input').value;
       const searchType = document.getElementById('search-type').value;
       const showVoided = document.getElementById('show-voided').checked;
+      const timeFilter = document.getElementById('return-time-filter')?.value || 'all';
 
       const params = new URLSearchParams({
         date: currentDate,
@@ -107,14 +126,19 @@
         params.append('search_type', searchType || 'invoice');
       }
 
+      // Persist current view in URL for easy sharing/bookmarks.
+      const qs = new URLSearchParams(window.location.search);
+      qs.set('date', currentDate);
+      if (timeFilter && timeFilter !== 'all') qs.set('time_filter', timeFilter);
+      else qs.delete('time_filter');
+      history.replaceState(null, '', `/returns.html?${qs.toString()}`);
+
       const res = await fetch('/api/returns?' + params.toString());
       if (!res.ok) return;
       const data = await res.json();
 
       document.getElementById('date-display').textContent =
         new Date(currentDate + 'T00:00:00').toLocaleDateString('en-NZ', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-      document.getElementById('total-cars').textContent = data.total;
-
       renderReturnsTable(data);
       updateNavCarsCount();
     }
@@ -131,31 +155,39 @@
 
       // Group returns by time
       const groups = data.groups || {};
+      let totalShown = 0;
       let groupedCars = 0;
       for (const [time, cars] of Object.entries(groups)) {
-        groupedCars += cars.length;
+        const filteredCars = filterCarsByReturnTime(cars);
+        if (filteredCars.length === 0) continue;
+        groupedCars += filteredCars.length;
+        totalShown += filteredCars.length;
+        const timeLabel = (time && String(time).trim()) ? time : 'TBC';
         html += `
           <div class="mb-3">
             <div class="returns-group-header">
-              <span>${currentDate} - Return Time: <strong>${time}</strong></span>
-              <span>${cars.length} Car${cars.length !== 1 ? 's' : ''}</span>
+              <span>${currentDate} - Return Time: <strong>${timeLabel}</strong></span>
+              <span>${filteredCars.length} Car${filteredCars.length !== 1 ? 's' : ''}</span>
             </div>
-            ${renderCarsTable(cars)}
+            ${renderCarsTable(filteredCars)}
           </div>`;
       }
 
       // Overdue/Unknown
-      if (data.overdue && data.overdue.length > 0) {
+      const overdueFiltered = filterCarsByReturnTime(data.overdue || []);
+      if (overdueFiltered.length > 0) {
+        totalShown += overdueFiltered.length;
         html += `
           <div class="mb-3">
             <div class="returns-overdue-header d-flex justify-content-between">
               <span>Unknown/Overdue</span>
-              <span>Total Cars: ${data.overdue.length}</span>
+              <span>Total Cars: ${overdueFiltered.length}</span>
             </div>
-            ${renderCarsTable(data.overdue)}
+            ${renderCarsTable(overdueFiltered)}
           </div>`;
       }
 
+      document.getElementById('total-cars').textContent = totalShown;
       container.innerHTML = html;
 
       // Attach pickup buttons
@@ -218,7 +250,7 @@
                       <td class="fw-bold small">${formatCurrency(car.payment_amount)}</td>
                       <td>${statusBadge(car.paid_status)}</td>
                       <td class="small">${formatDateShort(car.return_date)}</td>
-                      <td class="small">${car.return_time||''}</td>
+                      <td class="small">${car.return_time ? car.return_time : '<span class="badge bg-secondary-subtle text-secondary-emphasis">TBC</span>'}</td>
                       <td class="small text-muted" style="max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${car.notes||''}</td>
                       <td class="small">${car.staff_name||''}</td>
                       <td>
@@ -257,11 +289,16 @@
     document.getElementById('btn-reload').addEventListener('click', loadReturns);
     document.getElementById('btn-search').addEventListener('click', loadReturns);
     document.getElementById('search-input').addEventListener('keypress', (e) => { if(e.key === 'Enter') loadReturns(); });
+    document.getElementById('return-time-filter').addEventListener('change', loadReturns);
     document.querySelectorAll('input[name="dateFilter"]').forEach(r => r.addEventListener('change', loadReturns));
     document.getElementById('show-voided').addEventListener('change', loadReturns);
 
     async function init() {
       await checkAuth();
+      if (urlTimeFilter && ['all','tbc','timed'].includes(urlTimeFilter)) {
+        const tf = document.getElementById('return-time-filter');
+        if (tf) tf.value = urlTimeFilter;
+      }
       const statsRes = await fetch('/api/dashboard/stats');
       if (statsRes.ok) {
         const stats = await statsRes.json();
