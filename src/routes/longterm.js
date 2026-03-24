@@ -115,7 +115,11 @@ router.post('/:id/keybox', requireAuth, async (req, res) => {
     }
 
     if (action !== 'assign') return res.status(400).json({ error: 'Invalid action' });
-    const kn = parseKeyNumber(key_number);
+    let kn = parseKeyNumber(key_number);
+    if (kn == null) {
+      const fallback = parseInt(String(lt.lt_number || '').replace(/[^0-9]/g, ''), 10);
+      if (!Number.isNaN(fallback) && fallback > 0) kn = fallback;
+    }
     if (kn == null) return res.status(400).json({ error: 'Key number is required' });
 
     const conflict = await db.prepare(`

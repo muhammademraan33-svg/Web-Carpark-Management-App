@@ -15,6 +15,9 @@ function getTransporter() {
     host:   process.env.SMTP_HOST || 'smtp.gmail.com',
     port:   parseInt(process.env.SMTP_PORT || '587'),
     secure: process.env.SMTP_SECURE === 'true',
+    connectionTimeout: parseInt(process.env.SMTP_CONNECTION_TIMEOUT || '20000'),
+    greetingTimeout: parseInt(process.env.SMTP_GREETING_TIMEOUT || '12000'),
+    socketTimeout: parseInt(process.env.SMTP_SOCKET_TIMEOUT || '30000'),
     auth: {
       user: process.env.SMTP_USER || SMTP_USER_DEFAULT,
       pass: process.env.SMTP_PASS || SMTP_PASS_DEFAULT,
@@ -24,6 +27,14 @@ function getTransporter() {
 
 function emailFrom() {
   return process.env.EMAIL_FROM || SMTP_FROM_DEFAULT;
+}
+
+function longTermGstAmounts(lt) {
+  const GST_RATE = 0.15;
+  const base = parseFloat(lt.contract_amount != null && lt.contract_amount !== '' ? lt.contract_amount : lt.rate || 0) || 0;
+  const gst = Math.round((base * GST_RATE) * 100) / 100;
+  const total = Math.round((base + gst) * 100) / 100;
+  return { base, gst, total, rate: GST_RATE };
 }
 
 function buildAccountEmailHTML(carpark, account, invoices, total, monthName, year) {
@@ -164,9 +175,22 @@ router.post('/receipt/:invoiceId', requireAuth, async (req, res) => {
     if (!emailTo) return res.status(400).json({ error: 'No email address on this invoice' });
 
     const carpark = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(carparkId);
+    const ltMatch = invoice.rego
+      ? await db.prepare(`
+          SELECT id, lt_number
+          FROM longterm_customers
+          WHERE carpark_id = ? AND active = 1
+            AND (UPPER(TRIM(COALESCE(rego_1,''))) = UPPER(?) OR UPPER(TRIM(COALESCE(rego_2,''))) = UPPER(?))
+          LIMIT 1
+        `).get(carparkId, invoice.rego, invoice.rego)
+      : null;
 
     const fmt = (d) => d ? new Date(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
     const currency = (n) => `$${parseFloat(n || 0).toFixed(2)}`;
+    const GST_RATE = 0.15;
+    const totalInc = parseFloat(invoice.total_price || 0) || 0;
+    const gstAmt = ltMatch ? (totalInc - (totalInc / (1 + GST_RATE))) : 0;
+    const baseExGst = ltMatch ? (totalInc - gstAmt) : 0;
 
     const paymentRows = `
       <tr><td style="padding:6px 10px;border-bottom:1px solid #eee;"><strong>Payment</strong></td>
@@ -208,6 +232,8 @@ router.post('/receipt/:invoiceId', requireAuth, async (req, res) => {
     <hr style="border:1px solid #dee2e6;margin:16px 0;">
 
     <table style="width:100%;border-collapse:collapse;margin-bottom:12px;">
+      ${ltMatch ? `<tr><td style="padding:6px 10px;border-bottom:1px solid #eee;">Long-term base (ex GST)</td><td></td><td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right;">${currency(baseExGst)}</td></tr>` : ''}
+      ${ltMatch ? `<tr><td style="padding:6px 10px;border-bottom:1px solid #eee;">GST (15%)</td><td></td><td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right;">${currency(gstAmt)}</td></tr>` : ''}
       ${invoice.discount_percent > 0 ? `<tr><td style="padding:6px 10px;border-bottom:1px solid #eee;">Discount</td><td></td><td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right;color:#e74c3c;">-${invoice.discount_percent}%</td></tr>` : ''}
       ${invoice.credit_applied > 0  ? `<tr><td style="padding:6px 10px;border-bottom:1px solid #eee;">Credit Applied</td><td></td><td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right;color:#3498db;">${currency(invoice.credit_applied)}</td></tr>` : ''}
       <tr style="background:#f8f9fa;"><td style="padding:10px;font-size:16px;font-weight:bold;" colspan="2">TOTAL</td>
@@ -244,7 +270,7 @@ router.post('/receipt/:invoiceId', requireAuth, async (req, res) => {
 
 function longTermEmailHTML(carpark, lt, kind) {
   const currency = (n) => `$${parseFloat(n || 0).toFixed(2)}`;
-  const amt = lt.contract_amount != null ? lt.contract_amount : lt.rate;
+  const gst = longTermGstAmounts(lt);
   const bank = [
     carpark.bank_name ? `<p><strong>Bank:</strong> ${carpark.bank_name}</p>` : '',
     carpark.bank_account_name ? `<p><strong>Account name:</strong> ${carpark.bank_account_name}</p>` : '',
@@ -259,8 +285,9 @@ function longTermEmailHTML(carpark, lt, kind) {
   <p>Hi ${lt.name},</p>
   <p>Please arrange payment for your long-term storage contract <strong>${lt.lt_number}</strong>.</p>
   <table style="width:100%;border-collapse:collapse;margin:16px 0;background:#f8f9fa;border-radius:8px;">
-    <tr><td style="padding:12px;"><strong>Amount due</strong></td><td style="padding:12px;text-align:right;font-size:18px;color:#c0392b;">${currency(amt)}</td></tr>
-    <tr><td style="padding:12px;border-top:1px solid #dee2e6;">Rate</td><td style="padding:12px;border-top:1px solid #dee2e6;text-align:right;">${currency(lt.rate)} / ${lt.rate_period || 'monthly'}</td></tr>
+    <tr><td style="padding:12px;"><strong>Amount due</strong></td><td style="padding:12px;text-align:right;font-size:18px;color:#c0392b;">${currency(gst.total)}</td></tr>
+    <tr><td style="padding:12px;border-top:1px solid #dee2e6;">Amount ex GST</td><td style="padding:12px;border-top:1px solid #dee2e6;text-align:right;">${currency(gst.base)}</td></tr>
+    <tr><td style="padding:12px;border-top:1px solid #dee2e6;">GST (${Math.round(gst.rate * 100)}%)</td><td style="padding:12px;border-top:1px solid #dee2e6;text-align:right;">${currency(gst.gst)}</td></tr>
     ${lt.expiry_date ? `<tr><td style="padding:12px;border-top:1px solid #dee2e6;">Contract expiry</td><td style="padding:12px;border-top:1px solid #dee2e6;text-align:right;">${String(lt.expiry_date).slice(0, 10)}</td></tr>` : ''}
   </table>
   <h3 style="color:#2c3e50;font-size:15px;">Payment details</h3>
@@ -275,7 +302,9 @@ function longTermEmailHTML(carpark, lt, kind) {
   <p>Hi ${lt.name},</p>
   <p>Thank you — we have recorded payment for long-term contract <strong>${lt.lt_number}</strong>.</p>
   <table style="width:100%;border-collapse:collapse;margin:16px 0;background:#ecf9f1;border-radius:8px;">
-    <tr><td style="padding:12px;"><strong>Recorded amount</strong></td><td style="padding:12px;text-align:right;font-size:18px;color:#27ae60;">${currency(amt)}</td></tr>
+    <tr><td style="padding:12px;"><strong>Recorded amount</strong></td><td style="padding:12px;text-align:right;font-size:18px;color:#27ae60;">${currency(gst.total)}</td></tr>
+    <tr><td style="padding:12px;border-top:1px solid #c8e6c9;">Amount ex GST</td><td style="padding:12px;border-top:1px solid #c8e6c9;text-align:right;">${currency(gst.base)}</td></tr>
+    <tr><td style="padding:12px;border-top:1px solid #c8e6c9;">GST (${Math.round(gst.rate * 100)}%)</td><td style="padding:12px;border-top:1px solid #c8e6c9;text-align:right;">${currency(gst.gst)}</td></tr>
     <tr><td style="padding:12px;border-top:1px solid #c8e6c9;">Status</td><td style="padding:12px;border-top:1px solid #c8e6c9;text-align:right;">${lt.payment_status || 'Paid'}</td></tr>
     ${lt.expiry_date ? `<tr><td style="padding:12px;border-top:1px solid #c8e6c9;">Contract expiry</td><td style="padding:12px;border-top:1px solid #c8e6c9;text-align:right;">${String(lt.expiry_date).slice(0, 10)}</td></tr>` : ''}
   </table>
@@ -301,7 +330,10 @@ router.post('/longterm/:id/payment-request', requireAuth, async (req, res) => {
     });
     res.json({ success: true, message: `Payment request sent to ${emailTo}` });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const msg = /timed?out/i.test(String(err.message || ''))
+      ? 'SMTP connection timeout. Check Railway SMTP env vars and outbound connection.'
+      : err.message;
+    res.status(500).json({ error: msg });
   }
 });
 
@@ -338,7 +370,10 @@ router.post('/longterm/:id/receipt', requireAuth, async (req, res) => {
     });
     res.json({ success: true, message: `Receipt / confirmation sent to ${emailTo}` });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const msg = /timed?out/i.test(String(err.message || ''))
+      ? 'SMTP connection timeout. Check Railway SMTP env vars and outbound connection.'
+      : err.message;
+    res.status(500).json({ error: msg });
   }
 });
 

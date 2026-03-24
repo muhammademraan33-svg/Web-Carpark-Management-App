@@ -373,15 +373,20 @@ function splitNameFromFull(full) {
  * 2) contract_amount fallback (prevents confusing $0.00 when rate is missing)
  */
 function getLongTermInvoiceAmount(lt) {
+  const GST_RATE = 0.15;
   const rate = parseFloat(lt.rate);
   if (Number.isFinite(rate) && rate > 0) {
-    return { amount: rate, source: 'rate' };
+    const base = rate;
+    const gst = base * GST_RATE;
+    return { amount: base + gst, base, gst, source: 'rate' };
   }
   const contract = parseFloat(lt.contract_amount);
   if (Number.isFinite(contract) && contract > 0) {
-    return { amount: contract, source: 'contract' };
+    const base = contract;
+    const gst = base * GST_RATE;
+    return { amount: base + gst, base, gst, source: 'contract' };
   }
-  return { amount: 0, source: 'none' };
+  return { amount: 0, base: 0, gst: 0, source: 'none' };
 }
 
 /** When rego matches a long-term record: fill customer + amount + on-account lock. */
@@ -394,9 +399,9 @@ function applyLongTermToInvoice(lt) {
   const selected = getLongTermInvoiceAmount(lt);
   document.getElementById('inv-total-price').value = selected.amount.toFixed(2);
   document.getElementById('inv-payment-amount').value = selected.amount.toFixed(2);
-  let breakdown = `Long-term ${lt.lt_number}: $${selected.amount.toFixed(2)} / ${lt.rate_period || 'monthly'}`;
+  let breakdown = `Long-term ${lt.lt_number}: ex GST $${selected.base.toFixed(2)} + GST $${selected.gst.toFixed(2)} = $${selected.amount.toFixed(2)}`;
   if (lt.contract_amount != null && lt.contract_amount !== '') {
-    breakdown += ` — term total $${parseFloat(lt.contract_amount).toFixed(2)}`;
+    breakdown += ` (term base $${parseFloat(lt.contract_amount).toFixed(2)})`;
   }
   if (selected.source === 'contract') {
     breakdown += ' (using term total fallback: LT rate missing)';
@@ -435,8 +440,8 @@ async function runCustomerLookup() {
     const rp = lt.rate_period || 'monthly';
     const selected = getLongTermInvoiceAmount(lt);
     const msg = selected.source === 'contract'
-      ? `Long-term match (${lt.lt_number} — ${lt.name}). LT rate is missing, so term total fallback is used: $${selected.amount.toFixed(2)} (${rp}).`
-      : `Long-term match (${lt.lt_number} — ${lt.name}). Contract rate: $${selected.amount.toFixed(2)} (${rp}). Adjust total if needed.`;
+      ? `Long-term match (${lt.lt_number} — ${lt.name}). LT rate is missing, term fallback used: ex GST $${selected.base.toFixed(2)} + GST = $${selected.amount.toFixed(2)} (${rp}).`
+      : `Long-term match (${lt.lt_number} — ${lt.name}). Amount with GST: $${selected.amount.toFixed(2)} (ex GST $${selected.base.toFixed(2)}, ${rp}).`;
     showAlert(msg, 'warning');
     return;
   }
