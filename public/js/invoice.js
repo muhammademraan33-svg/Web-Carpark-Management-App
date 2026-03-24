@@ -121,7 +121,12 @@ document.getElementById('inv-flight-arrival-select').addEventListener('change', 
   if (e.target.value) {
     const tbc = document.getElementById('inv-return-time-tbc');
     if (tbc) tbc.checked = false;
+    document.getElementById('inv-return-date').disabled = false;
     document.getElementById('inv-return-time').disabled = false;
+    if (!document.getElementById('inv-return-date').value) {
+      const dateIn = document.getElementById('inv-date-in').value || localDateStr(new Date());
+      document.getElementById('inv-return-date').value = addDays(dateIn, 1);
+    }
     document.getElementById('inv-return-time').value = e.target.value;
     e.target.value = '';
   }
@@ -169,6 +174,7 @@ async function newInvoice() {
   document.getElementById('inv-return-date').value = addDays(localDateStr(now), 1);
   document.getElementById('inv-return-time').value = '14:35';
   document.getElementById('inv-return-time-tbc').checked = false;
+  document.getElementById('inv-return-date').disabled = false;
   document.getElementById('inv-return-time').disabled = false;
 
   updateNightsAndDisplay();
@@ -222,13 +228,16 @@ async function loadInvoice(invoiceNumber, invoiceId) {
   if (inv.date_in) document.getElementById('inv-date-in').value = inv.date_in.split('T')[0];
   if (inv.time_in) document.getElementById('inv-time-in').value = inv.time_in;
   if (inv.return_date) document.getElementById('inv-return-date').value = inv.return_date.split('T')[0];
-  if (inv.return_time) {
+  if (inv.return_date && inv.return_time) {
     document.getElementById('inv-return-time').value = inv.return_time;
     document.getElementById('inv-return-time-tbc').checked = false;
+    document.getElementById('inv-return-date').disabled = false;
     document.getElementById('inv-return-time').disabled = false;
   } else {
+    document.getElementById('inv-return-date').value = '';
     document.getElementById('inv-return-time').value = '';
     document.getElementById('inv-return-time-tbc').checked = true;
+    document.getElementById('inv-return-date').disabled = true;
     document.getElementById('inv-return-time').disabled = true;
   }
 
@@ -324,6 +333,7 @@ function setLongTermPricingMode(active) {
 }
 
 function syncReturnDateFromNights() {
+  if (document.getElementById('inv-return-time-tbc').checked) return;
   const dateIn = document.getElementById('inv-date-in').value;
   if (!dateIn) return;
   const nights = Math.max(0, parseInt(document.getElementById('inv-nights').value, 10) || 0);
@@ -543,10 +553,22 @@ document.getElementById('inv-return-date').addEventListener('change', () => {
 });
 document.getElementById('inv-time-in').addEventListener('change', updateNightsAndDisplay);
 document.getElementById('inv-return-time-tbc').addEventListener('change', (e) => {
+  const d = document.getElementById('inv-return-date');
   const t = document.getElementById('inv-return-time');
+  d.disabled = e.target.checked;
   t.disabled = e.target.checked;
-  if (e.target.checked) t.value = '';
-  else if (!t.value) t.value = '14:35';
+  if (e.target.checked) {
+    d.value = '';
+    t.value = '';
+  } else {
+    if (!d.value) {
+      const dateIn = document.getElementById('inv-date-in').value || localDateStr(new Date());
+      d.value = addDays(dateIn, 1);
+    }
+    if (!t.value) t.value = '14:35';
+  }
+  updateNightsAndDisplay();
+  loadFlightsForDate(d.value);
 });
 
 document.getElementById('btn-prev-date').addEventListener('click', () => {
@@ -768,7 +790,7 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
     email: document.getElementById('inv-email').value,
     date_in: document.getElementById('inv-date-in').value,
     time_in: document.getElementById('inv-time-in').value,
-    return_date: document.getElementById('inv-return-date').value,
+    return_date: document.getElementById('inv-return-time-tbc').checked ? null : document.getElementById('inv-return-date').value,
     return_time: document.getElementById('inv-return-time-tbc').checked ? null : document.getElementById('inv-return-time').value,
     stay_nights: document.getElementById('inv-nights').value,
     flight_info: document.getElementById('inv-flight-info').value,
