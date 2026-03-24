@@ -77,7 +77,7 @@ router.get('/:id', requireAuth, async (req, res) => {
 router.post('/', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
-    const { lt_number, name, rego_1, rego_2, phone, email, rate, rate_period, expiry_date, notes } = req.body;
+    const { lt_number, name, rego_1, rego_2, phone, email, rate, rate_period, expiry_date, notes, contract_amount, payment_status } = req.body;
     const existing = await db.prepare('SELECT id, active FROM longterm_customers WHERE lt_number = ? AND carpark_id = ?').get(lt_number, carparkId);
 
     // If the LT exists but is inactive, reuse the same LT# by reactivating it.
@@ -87,11 +87,15 @@ router.post('/', requireAuth, async (req, res) => {
 
       await db.prepare(`
         UPDATE longterm_customers
-        SET active = 1, name=?, rego_1=?, rego_2=?, phone=?, email=?, rate=?, rate_period=?, expiry_date=?, notes=?
+        SET active = 1, name=?, rego_1=?, rego_2=?, phone=?, email=?, rate=?, rate_period=?, expiry_date=?, notes=?,
+            contract_amount=?, payment_status=?
         WHERE id = ?
       `).run(
         name, rego_1, rego_2, phone, email,
-        rate || 0, rate_period || 'monthly', expiry_date || null, notes, existing.id
+        rate || 0, rate_period || 'monthly', expiry_date || null, notes,
+        contract_amount != null && contract_amount !== '' ? parseFloat(contract_amount) : null,
+        payment_status || 'Unpaid',
+        existing.id
       );
 
       const customer = await db.prepare('SELECT * FROM longterm_customers WHERE id = ?').get(existing.id);
@@ -100,9 +104,13 @@ router.post('/', requireAuth, async (req, res) => {
 
     const result = await db.prepare(`
       INSERT INTO longterm_customers
-        (lt_number, name, rego_1, rego_2, phone, email, rate, rate_period, expiry_date, notes, carpark_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(lt_number, name, rego_1, rego_2, phone, email, rate || 0, rate_period || 'monthly', expiry_date || null, notes, carparkId);
+        (lt_number, name, rego_1, rego_2, phone, email, rate, rate_period, expiry_date, notes, carpark_id, contract_amount, payment_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      lt_number, name, rego_1, rego_2, phone, email, rate || 0, rate_period || 'monthly', expiry_date || null, notes, carparkId,
+      contract_amount != null && contract_amount !== '' ? parseFloat(contract_amount) : null,
+      payment_status || 'Unpaid'
+    );
 
     const customer = await db.prepare('SELECT * FROM longterm_customers WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json(customer);
@@ -111,9 +119,14 @@ router.post('/', requireAuth, async (req, res) => {
 
 router.put('/:id', requireAuth, async (req, res) => {
   try {
-    const { name, rego_1, rego_2, phone, email, rate, rate_period, expiry_date, notes } = req.body;
-    await db.prepare(`UPDATE longterm_customers SET name=?, rego_1=?, rego_2=?, phone=?, email=?, rate=?, rate_period=?, expiry_date=?, notes=? WHERE id = ?`)
-      .run(name, rego_1, rego_2, phone, email, rate || 0, rate_period || 'monthly', expiry_date || null, notes, req.params.id);
+    const { name, rego_1, rego_2, phone, email, rate, rate_period, expiry_date, notes, contract_amount, payment_status } = req.body;
+    await db.prepare(`UPDATE longterm_customers SET name=?, rego_1=?, rego_2=?, phone=?, email=?, rate=?, rate_period=?, expiry_date=?, notes=?, contract_amount=?, payment_status=? WHERE id = ?`)
+      .run(
+        name, rego_1, rego_2, phone, email, rate || 0, rate_period || 'monthly', expiry_date || null, notes,
+        contract_amount != null && contract_amount !== '' ? parseFloat(contract_amount) : null,
+        payment_status || 'Unpaid',
+        req.params.id
+      );
     const customer = await db.prepare('SELECT * FROM longterm_customers WHERE id = ?').get(req.params.id);
     res.json(customer);
   } catch (err) { res.status(500).json({ error: err.message }); }

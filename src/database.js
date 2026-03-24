@@ -223,6 +223,10 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
+  try { x(`ALTER TABLE longterm_customers ADD COLUMN contract_amount REAL`); } catch (_) {}
+  try { x(`ALTER TABLE longterm_customers ADD COLUMN payment_status TEXT DEFAULT 'Unpaid'`); } catch (_) {}
+  try { x(`UPDATE longterm_customers SET payment_status = 'Unpaid' WHERE payment_status IS NULL OR payment_status = ''`); } catch (_) {}
+
   x(`CREATE TABLE IF NOT EXISTS account_customers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_name TEXT NOT NULL,

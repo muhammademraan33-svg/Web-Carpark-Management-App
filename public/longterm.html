@@ -105,12 +105,24 @@
             </div>
             <div class="col-md-8">
               <label class="form-label">Contract Term</label>
-              <div class="d-flex gap-2">
+              <div class="d-flex gap-2 flex-wrap">
                 <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-term-3m">+3 Months</button>
                 <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-term-6m">+6 Months</button>
-                <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-term-12m">+12 Months</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-term-12m">+12 Months / Annual</button>
               </div>
-              <div class="small text-muted mt-1">Use these buttons to auto-set expiry from today (or renew quickly).</div>
+              <div class="small text-muted mt-1">Sets expiry from today and fills <strong>Contract term total</strong> from your rate (monthly × months, or weekly/annual converted).</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Contract term total $</label>
+              <input type="number" step="0.01" class="form-control" id="lt-contract-amount" placeholder="e.g. 360.00">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">This term paid?</label>
+              <select class="form-select" id="lt-payment-status">
+                <option value="Unpaid">Unpaid</option>
+                <option value="Paid">Paid</option>
+                <option value="Partial">Partial</option>
+              </select>
             </div>
             <div class="col-md-8">
               <label class="form-label">Notes</label>
@@ -118,10 +130,18 @@
             </div>
           </div>
         </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="button" class="btn btn-danger" id="btn-delete-lt" style="display:none;">Delete</button>
-          <button type="button" class="btn btn-success" id="btn-save-lt">Save</button>
+        <div class="modal-footer flex-wrap gap-2">
+          <button type="button" class="btn btn-outline-primary btn-sm" id="btn-email-lt-pay" disabled title="Save the customer and add an email first">
+            <i class="bi bi-envelope-exclamation me-1"></i> Email payment request
+          </button>
+          <button type="button" class="btn btn-outline-success btn-sm" id="btn-email-lt-rcpt" disabled title="Save the customer and add an email first">
+            <i class="bi bi-envelope-check me-1"></i> Email receipt / paid
+          </button>
+          <div class="ms-auto d-flex gap-2">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" class="btn btn-danger" id="btn-delete-lt" style="display:none;">Delete</button>
+            <button type="button" class="btn btn-success" id="btn-save-lt">Save</button>
+          </div>
         </div>
       </div>
     </div>
@@ -139,6 +159,33 @@
       const d = new Date(base);
       d.setMonth(d.getMonth() + months);
       return localDateStr(d);
+    }
+
+    /** Amount for a multi-month term from rate + rate_period (3 / 6 / 12 months). */
+    function termTotalAmount(months) {
+      const rate = parseFloat(document.getElementById('lt-rate').value) || 0;
+      const period = document.getElementById('lt-rate-period').value || 'monthly';
+      if (period === 'monthly') return rate * months;
+      if (period === 'weekly') return rate * (52 / 12) * months;
+      if (period === 'annual') return (rate / 12) * months;
+      return rate * months;
+    }
+
+    function applyTermMonths(months) {
+      document.getElementById('lt-expiry').value = addMonthsYmd(localDateStr(new Date()), months);
+      const total = termTotalAmount(months);
+      const el = document.getElementById('lt-contract-amount');
+      if (el) el.value = total > 0 ? total.toFixed(2) : '';
+    }
+
+    function updateLtEmailButtons() {
+      const id = document.getElementById('lt-id').value;
+      const em = (document.getElementById('lt-email').value || '').trim();
+      const dis = !id || !em;
+      const bp = document.getElementById('btn-email-lt-pay');
+      const br = document.getElementById('btn-email-lt-rcpt');
+      if (bp) { bp.disabled = dis; bp.title = dis ? (id ? 'Add an email address above' : 'Save the customer first') : 'Send payment request email'; }
+      if (br) { br.disabled = dis; br.title = dis ? (id ? 'Add an email address above' : 'Save the customer first') : 'Send paid / receipt confirmation'; }
     }
 
     function renewalBadge(c) {
@@ -195,6 +242,7 @@
             <div class="lt-number">${c.lt_number}</div>
             <div class="lt-name" style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${c.name}">${c.name}</div>
             ${renewalBadge(c)}
+            ${c.payment_status === 'Paid' ? '<span class="badge bg-success ms-1">Paid</span>' : c.payment_status === 'Partial' ? '<span class="badge bg-info text-dark ms-1">Partial</span>' : '<span class="badge bg-light text-dark border ms-1">Unpaid</span>'}
             ${c.rego_1 ? `<span class="lt-rego">${c.rego_1}</span>` : '<span class="lt-rego text-muted">—</span>'}
             ${c.rego_2 ? `<span class="lt-rego">${c.rego_2}</span>` : '<span class="lt-rego text-muted" style="opacity:0.3;">—</span>'}
             <div class="small text-muted" style="min-width:90px;">${c.phone||''}</div>
@@ -243,7 +291,12 @@
       document.getElementById('lt-rate-period').value = lt.rate_period || 'monthly';
       document.getElementById('lt-expiry').value = lt.expiry_date ? lt.expiry_date.split('T')[0] : '';
       document.getElementById('lt-notes').value = lt.notes || '';
+      const ca = document.getElementById('lt-contract-amount');
+      if (ca) ca.value = lt.contract_amount != null && lt.contract_amount !== '' ? parseFloat(lt.contract_amount).toFixed(2) : '';
+      const ps = document.getElementById('lt-payment-status');
+      if (ps) ps.value = lt.payment_status || 'Unpaid';
       document.getElementById('btn-delete-lt').style.display = 'inline-block';
+      updateLtEmailButtons();
       new bootstrap.Modal('#ltModal').show();
     }
 
@@ -267,20 +320,41 @@
       document.getElementById('lt-rate').value = '120.00';
       document.getElementById('lt-rate-period').value = 'monthly';
       document.getElementById('lt-expiry').value = addMonthsYmd(localDateStr(new Date()), 3);
+      applyTermMonths(3);
       document.getElementById('lt-notes').value = '';
+      const ps = document.getElementById('lt-payment-status');
+      if (ps) ps.value = 'Unpaid';
       document.getElementById('btn-delete-lt').style.display = 'none';
+      updateLtEmailButtons();
       new bootstrap.Modal('#ltModal').show();
     });
 
-    document.getElementById('btn-term-3m').addEventListener('click', () => {
-      document.getElementById('lt-expiry').value = addMonthsYmd(localDateStr(new Date()), 3);
-    });
-    document.getElementById('btn-term-6m').addEventListener('click', () => {
-      document.getElementById('lt-expiry').value = addMonthsYmd(localDateStr(new Date()), 6);
-    });
-    document.getElementById('btn-term-12m').addEventListener('click', () => {
-      document.getElementById('lt-expiry').value = addMonthsYmd(localDateStr(new Date()), 12);
-    });
+    document.getElementById('btn-term-3m').addEventListener('click', () => applyTermMonths(3));
+    document.getElementById('btn-term-6m').addEventListener('click', () => applyTermMonths(6));
+    document.getElementById('btn-term-12m').addEventListener('click', () => applyTermMonths(12));
+
+    document.getElementById('lt-email').addEventListener('input', updateLtEmailButtons);
+
+    async function postLtEmail(path) {
+      const id = document.getElementById('lt-id').value;
+      if (!id) { showAlert('Save the customer first', 'warning'); return; }
+      const em = (document.getElementById('lt-email').value || '').trim();
+      if (!em) { showAlert('Add an email address first', 'warning'); return; }
+      const btn = path.includes('payment') ? document.getElementById('btn-email-lt-pay') : document.getElementById('btn-email-lt-rcpt');
+      if (btn) { btn.disabled = true; }
+      try {
+        const res = await fetch(`/api/email/longterm/${id}/${path}`, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) showAlert(data.message || 'Email sent', 'success');
+        else showAlert(data.error || 'Send failed', 'danger');
+      } catch (e) {
+        showAlert(e.message || 'Send failed', 'danger');
+      } finally {
+        updateLtEmailButtons();
+      }
+    }
+    document.getElementById('btn-email-lt-pay').addEventListener('click', () => postLtEmail('payment-request'));
+    document.getElementById('btn-email-lt-rcpt').addEventListener('click', () => postLtEmail('receipt'));
 
     document.getElementById('btn-save-lt').addEventListener('click', async () => {
       const id = document.getElementById('lt-id').value;
@@ -294,7 +368,9 @@
         rate: document.getElementById('lt-rate').value,
         rate_period: document.getElementById('lt-rate-period').value,
         expiry_date: document.getElementById('lt-expiry').value || null,
-        notes: document.getElementById('lt-notes').value
+        notes: document.getElementById('lt-notes').value,
+        contract_amount: document.getElementById('lt-contract-amount').value || null,
+        payment_status: document.getElementById('lt-payment-status').value || 'Unpaid'
       };
 
       if (!payload.name) { showAlert('Name is required', 'danger'); return; }
@@ -315,7 +391,12 @@
       }
 
       if (res.ok) {
+        const saved = await res.json();
+        if (saved && saved.id) {
+          document.getElementById('lt-id').value = saved.id;
+        }
         showAlert(id ? 'Long term customer updated' : 'Long term customer added', 'success');
+        updateLtEmailButtons();
         bootstrap.Modal.getInstance('#ltModal').hide();
         loadLongTerm();
       } else {

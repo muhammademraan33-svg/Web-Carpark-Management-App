@@ -242,6 +242,91 @@ router.post('/receipt/:invoiceId', requireAuth, async (req, res) => {
   }
 });
 
+function longTermEmailHTML(carpark, lt, kind) {
+  const currency = (n) => `$${parseFloat(n || 0).toFixed(2)}`;
+  const amt = lt.contract_amount != null ? lt.contract_amount : lt.rate;
+  const bank = [
+    carpark.bank_name ? `<p><strong>Bank:</strong> ${carpark.bank_name}</p>` : '',
+    carpark.bank_account_name ? `<p><strong>Account name:</strong> ${carpark.bank_account_name}</p>` : '',
+    carpark.bank_account_number ? `<p><strong>Account number:</strong> ${carpark.bank_account_number}</p>` : '',
+    carpark.bank_reference ? `<p><strong>Reference:</strong> ${carpark.bank_reference} — ${lt.lt_number}</p>` : `<p><strong>Reference:</strong> ${lt.lt_number}</p>`,
+  ].join('');
+
+  if (kind === 'payment') {
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;padding:20px;color:#333;">
+  <h2 style="color:#2c3e50;">${carpark.name} – Long-term payment due</h2>
+  <p>Hi ${lt.name},</p>
+  <p>Please arrange payment for your long-term storage contract <strong>${lt.lt_number}</strong>.</p>
+  <table style="width:100%;border-collapse:collapse;margin:16px 0;background:#f8f9fa;border-radius:8px;">
+    <tr><td style="padding:12px;"><strong>Amount due</strong></td><td style="padding:12px;text-align:right;font-size:18px;color:#c0392b;">${currency(amt)}</td></tr>
+    <tr><td style="padding:12px;border-top:1px solid #dee2e6;">Rate</td><td style="padding:12px;border-top:1px solid #dee2e6;text-align:right;">${currency(lt.rate)} / ${lt.rate_period || 'monthly'}</td></tr>
+    ${lt.expiry_date ? `<tr><td style="padding:12px;border-top:1px solid #dee2e6;">Contract expiry</td><td style="padding:12px;border-top:1px solid #dee2e6;text-align:right;">${String(lt.expiry_date).slice(0, 10)}</td></tr>` : ''}
+  </table>
+  <h3 style="color:#2c3e50;font-size:15px;">Payment details</h3>
+  ${bank || '<p>Please contact us for bank transfer details.</p>'}
+  <p style="color:#7f8c8d;font-size:12px;margin-top:24px;">${carpark.address || ''}<br>${carpark.phone || ''}</p>
+</body></html>`;
+  }
+
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;padding:20px;color:#333;">
+  <h2 style="color:#27ae60;">${carpark.name} – Payment received (thank you)</h2>
+  <p>Hi ${lt.name},</p>
+  <p>Thank you — we have recorded payment for long-term contract <strong>${lt.lt_number}</strong>.</p>
+  <table style="width:100%;border-collapse:collapse;margin:16px 0;background:#ecf9f1;border-radius:8px;">
+    <tr><td style="padding:12px;"><strong>Recorded amount</strong></td><td style="padding:12px;text-align:right;font-size:18px;color:#27ae60;">${currency(amt)}</td></tr>
+    <tr><td style="padding:12px;border-top:1px solid #c8e6c9;">Status</td><td style="padding:12px;border-top:1px solid #c8e6c9;text-align:right;">${lt.payment_status || 'Paid'}</td></tr>
+    ${lt.expiry_date ? `<tr><td style="padding:12px;border-top:1px solid #c8e6c9;">Contract expiry</td><td style="padding:12px;border-top:1px solid #c8e6c9;text-align:right;">${String(lt.expiry_date).slice(0, 10)}</td></tr>` : ''}
+  </table>
+  <p style="color:#7f8c8d;font-size:12px;margin-top:24px;">${carpark.address || ''}<br>${carpark.phone || ''}</p>
+</body></html>`;
+}
+
+// POST /api/email/longterm/:id/payment-request
+router.post('/longterm/:id/payment-request', requireAuth, async (req, res) => {
+  try {
+    const carparkId = req.session.carparkId || 1;
+    const lt = await db.prepare('SELECT * FROM longterm_customers WHERE id = ? AND carpark_id = ?').get(req.params.id, carparkId);
+    if (!lt) return res.status(404).json({ error: 'Long-term customer not found' });
+    const emailTo = (lt.email || '').trim();
+    if (!emailTo) return res.status(400).json({ error: 'No email on this long-term customer' });
+    const carpark = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(carparkId);
+    const transporter = getTransporter();
+    await transporter.sendMail({
+      from: emailFrom(),
+      to: emailTo,
+      subject: `${carpark ? carpark.name : 'Car Storage'} – Payment due (${lt.lt_number})`,
+      html: longTermEmailHTML(carpark || {}, lt, 'payment'),
+    });
+    res.json({ success: true, message: `Payment request sent to ${emailTo}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/email/longterm/:id/receipt  (confirmation / receipt email)
+router.post('/longterm/:id/receipt', requireAuth, async (req, res) => {
+  try {
+    const carparkId = req.session.carparkId || 1;
+    const lt = await db.prepare('SELECT * FROM longterm_customers WHERE id = ? AND carpark_id = ?').get(req.params.id, carparkId);
+    if (!lt) return res.status(404).json({ error: 'Long-term customer not found' });
+    const emailTo = (lt.email || '').trim();
+    if (!emailTo) return res.status(400).json({ error: 'No email on this long-term customer' });
+    const carpark = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(carparkId);
+    const transporter = getTransporter();
+    await transporter.sendMail({
+      from: emailFrom(),
+      to: emailTo,
+      subject: `${carpark ? carpark.name : 'Car Storage'} – Payment confirmation (${lt.lt_number})`,
+      html: longTermEmailHTML(carpark || {}, lt, 'receipt'),
+    });
+    res.json({ success: true, message: `Receipt / confirmation sent to ${emailTo}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/email/test
 router.post('/test', requireAuth, async (req, res) => {
   const { email } = req.body;

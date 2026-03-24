@@ -245,7 +245,7 @@ async function loadInvoice(invoiceNumber, invoiceId) {
   }
 
   if ((inv.account_customer_id || inv.paid_status === 'OnAcc') && !inv.void) {
-    setOnAccountPaymentLock(inv.account_customer_id ? 'On Account' : 'Long Term');
+    setOnAccountPaymentLock(inv.account_customer_id ? 'On Account' : 'Long Term', true);
   }
 
   updateNightsAndDisplay();
@@ -271,7 +271,7 @@ function updateNightsAndDisplay() {
   document.getElementById('time-in-display').textContent = timeIn || '--:--';
 }
 
-function setOnAccountPaymentLock(reasonLabel) {
+function setOnAccountPaymentLock(reasonLabel, silent) {
   paymentLockReason = reasonLabel || 'On Account';
   const paidStatus = document.getElementById('inv-paid-status');
   const splitToggle = document.getElementById('split-payment-toggle');
@@ -290,7 +290,7 @@ function setOnAccountPaymentLock(reasonLabel) {
   paidStatus2.disabled = true;
   payment2.value = '';
   payment2.disabled = true;
-  if (reasonLabel) showAlert(`Payment auto-set to On Account (${reasonLabel})`, 'info');
+  if (reasonLabel && !silent) showAlert(`Payment auto-set to On Account (${reasonLabel})`, 'info');
 }
 
 function clearOnAccountPaymentLock() {
@@ -303,6 +303,37 @@ function clearOnAccountPaymentLock() {
   splitToggle.disabled = false;
   paidStatus2.disabled = false;
   payment2.disabled = false;
+}
+
+function splitNameFromFull(full) {
+  const s = (full || '').trim();
+  if (!s) return { first: '', last: '' };
+  if (s.includes(',')) {
+    const parts = s.split(',').map(x => x.trim());
+    return { last: parts[0] || '', first: parts.slice(1).join(' ') || '' };
+  }
+  const parts = s.split(/\s+/);
+  if (parts.length === 1) return { first: '', last: parts[0] };
+  return { first: parts[0], last: parts.slice(1).join(' ') };
+}
+
+/** When rego matches a long-term record: fill customer + monthly amount + on-account lock. */
+function applyLongTermToInvoice(lt) {
+  const { first, last } = splitNameFromFull(lt.name);
+  document.getElementById('inv-first-name').value = first;
+  document.getElementById('inv-last-name').value = last;
+  if (lt.phone) document.getElementById('inv-phone').value = lt.phone;
+  if (lt.email) document.getElementById('inv-email').value = lt.email;
+  const rate = parseFloat(lt.rate) || 0;
+  document.getElementById('inv-total-price').value = rate.toFixed(2);
+  document.getElementById('inv-payment-amount').value = rate.toFixed(2);
+  let breakdown = `Long-term ${lt.lt_number}: $${rate.toFixed(2)} / ${lt.rate_period || 'monthly'}`;
+  if (lt.contract_amount != null && lt.contract_amount !== '') {
+    breakdown += ` — term total $${parseFloat(lt.contract_amount).toFixed(2)}`;
+  }
+  document.getElementById('price-breakdown').textContent = breakdown;
+  document.getElementById('inv-account-customer').value = '';
+  setOnAccountPaymentLock('Long Term', true);
 }
 
 // ─── Rego / email lookup: previous invoice + long-term + on-account detection ─
@@ -319,6 +350,21 @@ async function runCustomerLookup() {
   const data = await res.json();
   const inv = data.invoice;
 
+  if (data.longterm) {
+    const lt = data.longterm;
+    applyLongTermToInvoice(lt);
+    if (inv) {
+      const alertText = inv.customer_alert || inv.customer_alert_stored;
+      if (alertText) setCustomerAlertText(alertText);
+      if (inv.customer_id && !document.getElementById('inv-customer-id').value) {
+        document.getElementById('inv-customer-id').value = inv.customer_id;
+      }
+    }
+    const rp = lt.rate_period || 'monthly';
+    showAlert(`Long-term match (${lt.lt_number} — ${lt.name}). Contract rate: $${parseFloat(lt.rate || 0).toFixed(2)} (${rp}). Adjust total if needed.`, 'warning');
+    return;
+  }
+
   if (inv) {
     const fill = (id, val) => { if (val && !document.getElementById(id).value) document.getElementById(id).value = val; };
     fill('inv-last-name', inv.last_name);
@@ -333,25 +379,15 @@ async function runCustomerLookup() {
     showAlert(`✓ Details auto-filled from previous visit (Invoice #${inv.invoice_number})`, 'info');
   }
 
-  if (data.longterm) {
-    const lt = data.longterm;
-    const rp = lt.rate_period || 'monthly';
-    showAlert(`Long-term match (${lt.lt_number} — ${lt.name}). Contract rate: $${parseFloat(lt.rate || 0).toFixed(2)} (${rp}). Adjust total if this is a casual short stay.`, 'warning');
-    const tp = document.getElementById('inv-total-price');
-    if (tp && !tp.value && lt.rate) {
-      tp.value = parseFloat(lt.rate).toFixed(2);
-      const pa = document.getElementById('inv-payment-amount');
-      if (pa && !pa.value) pa.value = parseFloat(lt.rate).toFixed(2);
-    }
-    setOnAccountPaymentLock('Long Term');
-  }
-
-  if (data.accountCustomer && !data.longterm) {
+  if (data.accountCustomer) {
     document.getElementById('inv-account-customer').value = data.accountCustomer.id;
-    const d = data.accountCustomer.discount_percent || 0;
-    showAlert(`On-account customer: ${data.accountCustomer.company_name}${d > 0 ? ` (${d}% discount on short-term rates)` : ''}`, 'info');
+    const acct = data.accountCustomer;
+    const billing = (acct.billing_email || acct.email || '').trim();
+    if (billing) document.getElementById('inv-email').value = billing;
+    const d = acct.discount_percent || 0;
+    showAlert(`On-account customer: ${acct.company_name}${d > 0 ? ` (${d}% discount on short-term rates)` : ''}`, 'info');
     const nights = parseInt(document.getElementById('inv-nights').value, 10) || 1;
-    fetch(`/api/invoices/calculate-price?nights=${nights}&account_customer_id=${data.accountCustomer.id}`)
+    fetch(`/api/invoices/calculate-price?nights=${nights}&account_customer_id=${acct.id}`)
       .then(r => r.json())
       .then(p => {
         if (!p || p.error) return;
@@ -360,10 +396,10 @@ async function runCustomerLookup() {
         document.getElementById('price-breakdown').textContent =
           `${nights} day(s) × $${p.dailyRate}/day = $${(p.dailyRate * nights).toFixed(2)}` +
           (p.discountPercent > 0 ? ` (${p.discountPercent}% account discount → $${p.total.toFixed(2)})` : '');
-        setOnAccountPaymentLock('On Account');
+        setOnAccountPaymentLock('On Account', true);
       })
       .catch(() => {});
-  } else if (!data.longterm && !data.accountCustomer && !document.getElementById('inv-account-customer').value) {
+  } else if (!data.accountCustomer && !document.getElementById('inv-account-customer').value) {
     clearOnAccountPaymentLock();
   }
 }
@@ -386,7 +422,13 @@ document.getElementById('inv-account-customer').addEventListener('change', () =>
     clearOnAccountPaymentLock();
     return;
   }
-  setOnAccountPaymentLock('On Account');
+  const id = document.getElementById('inv-account-customer').value;
+  const acct = accountCustomers.find(a => String(a.id) === String(id));
+  if (acct) {
+    const billing = (acct.billing_email || acct.email || '').trim();
+    if (billing) document.getElementById('inv-email').value = billing;
+  }
+  setOnAccountPaymentLock('On Account', true);
 });
 
 // ─── Event listeners ──────────────────────────────────────────────────────────
