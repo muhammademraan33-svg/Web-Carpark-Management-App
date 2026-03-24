@@ -11,6 +11,30 @@ router.get('/calculate-price', requireAuth, async (req, res) => {
     const carparkId = req.session.carparkId || 1;
     const { nights, account_customer_id } = req.query;
     const n = parseInt(nights) || 1;
+    const accountRateCard = {
+      1: 18.00,
+      2: 16.50,
+      3: 16.00,
+      4: 15.75,
+      5: 15.60,
+      6: 15.50,
+      7: 15.43,
+      8: 15.00,
+      9: 14.67,
+    };
+
+    if (account_customer_id && accountRateCard[n]) {
+      const dailyRate = accountRateCard[n];
+      const total = Math.round((dailyRate * n) * 100) / 100;
+      return res.json({
+        nights: n,
+        dailyRate,
+        total,
+        discountPercent: 0,
+        pricing_mode: 'account_rate_card',
+      });
+    }
+
     let discountPercent = 0;
     if (account_customer_id) {
       const acct = await db.prepare('SELECT discount_percent FROM account_customers WHERE id = ?').get(account_customer_id);

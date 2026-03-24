@@ -6,6 +6,8 @@ let staffList = [];
 let accountCustomers = [];
 let _saving = false; // guard against concurrent saves / race conditions
 let paymentLockReason = ''; // when set, PAID STATUS is hard-locked to OnAcc
+let longTermPricingActive = false; // when true, LT auto price is in control
+let pricingMode = 'manual'; // manual | longterm | account-rate-card | account-discount
 
 // ─── Customer alert helpers (robust if elements missing) ──────────────────────
 function getCustomerAlertElement() {
@@ -124,6 +126,7 @@ document.getElementById('inv-flight-arrival-select').addEventListener('change', 
 
 async function newInvoice() {
   clearOnAccountPaymentLock();
+  setPricingModeLabel('manual');
   // Get next invoice number
   const res = await fetch('/api/invoices/next-number');
   if (res.ok) {
@@ -245,7 +248,12 @@ async function loadInvoice(invoiceNumber, invoiceId) {
   }
 
   if ((inv.account_customer_id || inv.paid_status === 'OnAcc') && !inv.void) {
+    // If OnAcc but no linked account customer, treat as LT-style locked pricing.
+    setLongTermPricingMode(!inv.account_customer_id && inv.paid_status === 'OnAcc');
+    setPricingModeLabel(inv.account_customer_id ? 'account-rate-card' : 'longterm');
     setOnAccountPaymentLock(inv.account_customer_id ? 'On Account' : 'Long Term', true);
+  } else {
+    setPricingModeLabel('manual');
   }
 
   updateNightsAndDisplay();
@@ -269,6 +277,46 @@ function updateNightsAndDisplay() {
   document.getElementById('inv-nights').value = nights;
   document.getElementById('date-in-display').textContent = dateIn ? formatDate(dateIn) : 'Not set';
   document.getElementById('time-in-display').textContent = timeIn || '--:--';
+}
+
+function setPricingModeLabel(mode) {
+  pricingMode = mode || 'manual';
+  const el = document.getElementById('pricing-mode-label');
+  if (!el) return;
+  if (pricingMode === 'longterm') {
+    el.innerHTML = '<span class="badge bg-warning text-dark">Mode: Long Term Auto</span>';
+    return;
+  }
+  if (pricingMode === 'account-rate-card') {
+    el.innerHTML = '<span class="badge bg-info text-dark">Mode: Account Rate Card</span>';
+    return;
+  }
+  if (pricingMode === 'account-discount') {
+    el.innerHTML = '<span class="badge bg-primary">Mode: Account Discount Pricing</span>';
+    return;
+  }
+  el.innerHTML = '<span class="badge bg-secondary-subtle text-secondary-emphasis">Mode: Manual / Short-stay</span>';
+}
+
+function setLongTermPricingMode(active) {
+  longTermPricingActive = !!active;
+  const calcBtn = document.getElementById('btn-calculate');
+  if (!calcBtn) return;
+  calcBtn.disabled = longTermPricingActive;
+  calcBtn.title = longTermPricingActive
+    ? 'Long-term booking detected: price auto-filled from long-term settings'
+    : '';
+  if (longTermPricingActive) setPricingModeLabel('longterm');
+  else if (pricingMode === 'longterm') setPricingModeLabel('manual');
+}
+
+function syncReturnDateFromNights() {
+  const dateIn = document.getElementById('inv-date-in').value;
+  if (!dateIn) return;
+  const nights = Math.max(0, parseInt(document.getElementById('inv-nights').value, 10) || 0);
+  document.getElementById('inv-return-date').value = addDays(dateIn, nights);
+  updateNightsAndDisplay();
+  loadFlightsForDate(document.getElementById('inv-return-date').value);
 }
 
 function setOnAccountPaymentLock(reasonLabel, silent) {
@@ -295,6 +343,7 @@ function setOnAccountPaymentLock(reasonLabel, silent) {
 
 function clearOnAccountPaymentLock() {
   paymentLockReason = '';
+  setLongTermPricingMode(false);
   const paidStatus = document.getElementById('inv-paid-status');
   const splitToggle = document.getElementById('split-payment-toggle');
   const paidStatus2 = document.getElementById('inv-paid-status-2');
@@ -317,22 +366,45 @@ function splitNameFromFull(full) {
   return { first: parts[0], last: parts.slice(1).join(' ') };
 }
 
-/** When rego matches a long-term record: fill customer + monthly amount + on-account lock. */
+/**
+ * Decide which amount to use for a long-term invoice preview.
+ * Priority:
+ * 1) explicit LT rate (normal case)
+ * 2) contract_amount fallback (prevents confusing $0.00 when rate is missing)
+ */
+function getLongTermInvoiceAmount(lt) {
+  const rate = parseFloat(lt.rate);
+  if (Number.isFinite(rate) && rate > 0) {
+    return { amount: rate, source: 'rate' };
+  }
+  const contract = parseFloat(lt.contract_amount);
+  if (Number.isFinite(contract) && contract > 0) {
+    return { amount: contract, source: 'contract' };
+  }
+  return { amount: 0, source: 'none' };
+}
+
+/** When rego matches a long-term record: fill customer + amount + on-account lock. */
 function applyLongTermToInvoice(lt) {
   const { first, last } = splitNameFromFull(lt.name);
   document.getElementById('inv-first-name').value = first;
   document.getElementById('inv-last-name').value = last;
   if (lt.phone) document.getElementById('inv-phone').value = lt.phone;
   if (lt.email) document.getElementById('inv-email').value = lt.email;
-  const rate = parseFloat(lt.rate) || 0;
-  document.getElementById('inv-total-price').value = rate.toFixed(2);
-  document.getElementById('inv-payment-amount').value = rate.toFixed(2);
-  let breakdown = `Long-term ${lt.lt_number}: $${rate.toFixed(2)} / ${lt.rate_period || 'monthly'}`;
+  const selected = getLongTermInvoiceAmount(lt);
+  document.getElementById('inv-total-price').value = selected.amount.toFixed(2);
+  document.getElementById('inv-payment-amount').value = selected.amount.toFixed(2);
+  let breakdown = `Long-term ${lt.lt_number}: $${selected.amount.toFixed(2)} / ${lt.rate_period || 'monthly'}`;
   if (lt.contract_amount != null && lt.contract_amount !== '') {
     breakdown += ` — term total $${parseFloat(lt.contract_amount).toFixed(2)}`;
   }
+  if (selected.source === 'contract') {
+    breakdown += ' (using term total fallback: LT rate missing)';
+  }
   document.getElementById('price-breakdown').textContent = breakdown;
   document.getElementById('inv-account-customer').value = '';
+  setPricingModeLabel('longterm');
+  setLongTermPricingMode(true);
   setOnAccountPaymentLock('Long Term', true);
 }
 
@@ -361,7 +433,11 @@ async function runCustomerLookup() {
       }
     }
     const rp = lt.rate_period || 'monthly';
-    showAlert(`Long-term match (${lt.lt_number} — ${lt.name}). Contract rate: $${parseFloat(lt.rate || 0).toFixed(2)} (${rp}). Adjust total if needed.`, 'warning');
+    const selected = getLongTermInvoiceAmount(lt);
+    const msg = selected.source === 'contract'
+      ? `Long-term match (${lt.lt_number} — ${lt.name}). LT rate is missing, so term total fallback is used: $${selected.amount.toFixed(2)} (${rp}).`
+      : `Long-term match (${lt.lt_number} — ${lt.name}). Contract rate: $${selected.amount.toFixed(2)} (${rp}). Adjust total if needed.`;
+    showAlert(msg, 'warning');
     return;
   }
 
@@ -395,7 +471,13 @@ async function runCustomerLookup() {
         document.getElementById('inv-payment-amount').value = p.total.toFixed(2);
         document.getElementById('price-breakdown').textContent =
           `${nights} day(s) × $${p.dailyRate}/day = $${(p.dailyRate * nights).toFixed(2)}` +
-          (p.discountPercent > 0 ? ` (${p.discountPercent}% account discount → $${p.total.toFixed(2)})` : '');
+          (p.pricing_mode === 'account_rate_card'
+            ? ' (account rate card)'
+            : (p.discountPercent > 0 ? ` (${p.discountPercent}% account discount → $${p.total.toFixed(2)})` : ''));
+        setPricingModeLabel(p.pricing_mode === 'account_rate_card'
+          ? 'account-rate-card'
+          : (p.discountPercent > 0 ? 'account-discount' : 'manual'));
+        setLongTermPricingMode(false);
         setOnAccountPaymentLock('On Account', true);
       })
       .catch(() => {});
@@ -419,6 +501,7 @@ document.getElementById('inv-rego').addEventListener('keydown', (e) => {
 document.getElementById('inv-account-customer').addEventListener('change', () => {
   if (currentInvoiceId) return;
   if (!document.getElementById('inv-account-customer').value) {
+    setPricingModeLabel('manual');
     clearOnAccountPaymentLock();
     return;
   }
@@ -428,11 +511,14 @@ document.getElementById('inv-account-customer').addEventListener('change', () =>
     const billing = (acct.billing_email || acct.email || '').trim();
     if (billing) document.getElementById('inv-email').value = billing;
   }
+  setPricingModeLabel('account-rate-card');
   setOnAccountPaymentLock('On Account', true);
 });
 
 // ─── Event listeners ──────────────────────────────────────────────────────────
 document.getElementById('inv-date-in').addEventListener('change', updateNightsAndDisplay);
+document.getElementById('inv-nights').addEventListener('change', syncReturnDateFromNights);
+document.getElementById('inv-nights').addEventListener('blur', syncReturnDateFromNights);
 document.getElementById('inv-return-date').addEventListener('change', () => {
   updateNightsAndDisplay();
   loadFlightsForDate(document.getElementById('inv-return-date').value);
@@ -487,7 +573,8 @@ document.getElementById('inv-discount-10').addEventListener('change', () => {
       document.getElementById('inv-total-price').value = newTotal.toFixed(2);
       document.getElementById('inv-payment-amount').value = newTotal.toFixed(2);
       let b = `${nights} day(s) × $${data.dailyRate}/day = $${data.total.toFixed(2)}`;
-      if (data.discountPercent > 0) b += ` (${data.discountPercent}% account discount)`;
+      if (data.pricing_mode === 'account_rate_card') b += ' (account rate card)';
+      else if (data.discountPercent > 0) b += ` (${data.discountPercent}% account discount)`;
       if (isChecked) b += ` → -10% = $${newTotal.toFixed(2)}`;
       document.getElementById('price-breakdown').textContent = b;
     });
@@ -522,6 +609,10 @@ document.getElementById('inv-paid-status').addEventListener('change', () => {
 
 // Calculate price
 document.getElementById('btn-calculate').addEventListener('click', async () => {
+  if (longTermPricingActive) {
+    showAlert('Long-term booking detected: price is auto-filled from Long Term settings.', 'info');
+    return;
+  }
   const nights = parseInt(document.getElementById('inv-nights').value) || 1;
   const accountId = document.getElementById('inv-account-customer').value;
   const res = await fetch(`/api/invoices/calculate-price?nights=${nights}&account_customer_id=${accountId}`);
@@ -536,9 +627,13 @@ document.getElementById('btn-calculate').addEventListener('click', async () => {
   document.getElementById('inv-total-price').value = total.toFixed(2);
   document.getElementById('inv-payment-amount').value = total.toFixed(2);
   let breakdown = `${nights} day(s) × $${data.dailyRate}/day = $${data.total.toFixed(2)}`;
-  if (data.discountPercent > 0) breakdown += ` (${data.discountPercent}% account discount applied)`;
+  if (data.pricing_mode === 'account_rate_card') breakdown += ' (account rate card)';
+  else if (data.discountPercent > 0) breakdown += ` (${data.discountPercent}% account discount applied)`;
   if (document.getElementById('inv-discount-10').checked) breakdown += ` (-10% discount)`;
   document.getElementById('price-breakdown').textContent = breakdown;
+  setPricingModeLabel(data.pricing_mode === 'account_rate_card'
+    ? 'account-rate-card'
+    : (data.discountPercent > 0 ? 'account-discount' : 'manual'));
 });
 
 // Search customer

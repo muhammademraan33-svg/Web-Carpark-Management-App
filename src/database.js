@@ -306,8 +306,15 @@ async function initializeDatabase() {
     key_number INTEGER NOT NULL,
     status TEXT DEFAULT 'available',
     invoice_id INTEGER,
+    longterm_customer_id INTEGER,
+    holder_type TEXT DEFAULT 'invoice',
     UNIQUE(carpark_id, key_number)
   )`);
+  try { x(`ALTER TABLE key_box ADD COLUMN longterm_customer_id INTEGER`); } catch (_) {}
+  try { x(`ALTER TABLE key_box ADD COLUMN holder_type TEXT DEFAULT 'invoice'`); } catch (_) {}
+  try { x(`UPDATE key_box SET holder_type = 'available' WHERE status = 'available'`); } catch (_) {}
+  try { x(`UPDATE key_box SET holder_type = 'invoice' WHERE status = 'in_use' AND invoice_id IS NOT NULL`); } catch (_) {}
+  try { x(`UPDATE key_box SET holder_type = 'longterm' WHERE status = 'in_use' AND longterm_customer_id IS NOT NULL`); } catch (_) {}
 
   x(`CREATE TABLE IF NOT EXISTS petty_cash (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -475,9 +482,9 @@ async function initializeDatabase() {
       'Maurice', 'Daniels', '0274133677', 'maurice@email.com',
       todayStr, '09:00', todayStr, '17:05', 3, 43.20, 'Eftpos', 43.20, 0, 1);
 
-    await db.prepare("UPDATE key_box SET status = 'in_use', invoice_id = 1 WHERE carpark_id = 1 AND key_number = 25").run();
-    await db.prepare("UPDATE key_box SET status = 'in_use', invoice_id = 2 WHERE carpark_id = 1 AND key_number = 4").run();
-    await db.prepare("UPDATE key_box SET status = 'in_use', invoice_id = 3 WHERE carpark_id = 1 AND key_number = 22").run();
+    await db.prepare("UPDATE key_box SET status = 'in_use', invoice_id = 1, longterm_customer_id = NULL, holder_type = 'invoice' WHERE carpark_id = 1 AND key_number = 25").run();
+    await db.prepare("UPDATE key_box SET status = 'in_use', invoice_id = 2, longterm_customer_id = NULL, holder_type = 'invoice' WHERE carpark_id = 1 AND key_number = 4").run();
+    await db.prepare("UPDATE key_box SET status = 'in_use', invoice_id = 3, longterm_customer_id = NULL, holder_type = 'invoice' WHERE carpark_id = 1 AND key_number = 22").run();
   }
 
   saveToDisk();

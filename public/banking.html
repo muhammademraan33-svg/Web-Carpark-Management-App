@@ -59,7 +59,7 @@
                 <i class="bi bi-floppy me-1"></i>Save Banking Record
               </button>
               <button class="btn btn-outline-secondary mt-2 btn-sm" id="btn-autofill-banking">
-                <i class="bi bi-calculator me-1"></i>Auto-fill from today's invoices
+                <i class="bi bi-calculator me-1"></i>Auto-fill from selected date invoices
               </button>
             </div>
           </div>
@@ -203,7 +203,7 @@
     // Set default dates
     const now = new Date();
     const firstOfMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
-    const todayStr = now.toISOString().split('T')[0];
+    const todayStr = localDateStr(now);
 
     document.getElementById('banking-date').value = todayStr;
     document.getElementById('bank-from').value = firstOfMonth;
@@ -261,13 +261,14 @@
     // Auto-fill from invoices
     document.getElementById('btn-autofill-banking').addEventListener('click', async () => {
       const date = document.getElementById('banking-date').value;
-      const res = await fetch(`/api/reports/revenue?from=${date}&to=${date}`);
+      const res = await fetch(`/api/banking/autofill?date=${encodeURIComponent(date)}`);
       if (!res.ok) return;
       const data = await res.json();
-      document.getElementById('banking-eftpos').value = data.summary.eftpos_total.toFixed(2);
-      document.getElementById('banking-cash').value = data.summary.cash_total.toFixed(2);
-      document.getElementById('banking-account').value = data.summary.on_account_total.toFixed(2);
-      showAlert('Banking totals auto-filled from today\'s invoices', 'info');
+      document.getElementById('banking-eftpos').value = Number(data.eftpos || 0).toFixed(2);
+      document.getElementById('banking-cash').value = Number(data.cash || 0).toFixed(2);
+      document.getElementById('banking-account').value = Number(data.account || 0).toFixed(2);
+      document.getElementById('banking-other').value = Number(data.other || 0).toFixed(2);
+      showAlert(`Banking totals auto-filled from invoices on ${date}`, 'info');
     });
 
     document.getElementById('btn-load-banking').addEventListener('click', loadBanking);

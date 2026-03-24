@@ -83,6 +83,19 @@
               <label class="form-label">Phone</label>
               <input type="text" class="form-control" id="lt-phone" placeholder="021 000 0000">
             </div>
+            <div class="col-md-4">
+              <label class="form-label">LT Key #</label>
+              <select class="form-select" id="lt-key-number">
+                <option value="">-- No LT key assigned --</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">In Yard Status</label>
+              <select class="form-select" id="lt-key-status">
+                <option value="in_yard">Car In Yard (key in use)</option>
+                <option value="released">Picked Up / Released</option>
+              </select>
+            </div>
             <div class="col-md-6">
               <label class="form-label">Email</label>
               <input type="email" class="form-control" id="lt-email" placeholder="email@example.com">
@@ -131,6 +144,12 @@
           </div>
         </div>
         <div class="modal-footer flex-wrap gap-2">
+          <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-preview-lt-pay" disabled title="Save first to preview email template">
+            <i class="bi bi-eye me-1"></i> Preview payment email
+          </button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-preview-lt-rcpt" disabled title="Save first to preview email template">
+            <i class="bi bi-eye me-1"></i> Preview receipt email
+          </button>
           <button type="button" class="btn btn-outline-primary btn-sm" id="btn-email-lt-pay" disabled title="Save the customer and add an email first">
             <i class="bi bi-envelope-exclamation me-1"></i> Email payment request
           </button>
@@ -153,6 +172,8 @@
   <script src="/js/common.js"></script>
   <script>
     document.getElementById('navbar-container').innerHTML = renderNavbar('longterm');
+    const LT_DEFAULT_MONTHLY = 200.00;
+    const LT_TERM_TOTALS = { 3: 500.00, 6: 1000.00, 12: 1650.00 };
 
     function addMonthsYmd(ymd, months) {
       const base = ymd ? new Date(`${ymd}T00:00:00`) : new Date();
@@ -161,8 +182,9 @@
       return localDateStr(d);
     }
 
-    /** Amount for a multi-month term from rate + rate_period (3 / 6 / 12 months). */
+    /** Amount for a multi-month term from agreed LT schedule. */
     function termTotalAmount(months) {
+      if (LT_TERM_TOTALS[months]) return LT_TERM_TOTALS[months];
       const rate = parseFloat(document.getElementById('lt-rate').value) || 0;
       const period = document.getElementById('lt-rate-period').value || 'monthly';
       if (period === 'monthly') return rate * months;
@@ -176,6 +198,10 @@
       const total = termTotalAmount(months);
       const el = document.getElementById('lt-contract-amount');
       if (el) el.value = total > 0 ? total.toFixed(2) : '';
+      const rateEl = document.getElementById('lt-rate');
+      if (rateEl && (!rateEl.value || parseFloat(rateEl.value) <= 0)) {
+        rateEl.value = LT_DEFAULT_MONTHLY.toFixed(2);
+      }
     }
 
     function updateLtEmailButtons() {
@@ -184,8 +210,17 @@
       const dis = !id || !em;
       const bp = document.getElementById('btn-email-lt-pay');
       const br = document.getElementById('btn-email-lt-rcpt');
+      const pp = document.getElementById('btn-preview-lt-pay');
+      const pr = document.getElementById('btn-preview-lt-rcpt');
       if (bp) { bp.disabled = dis; bp.title = dis ? (id ? 'Add an email address above' : 'Save the customer first') : 'Send payment request email'; }
       if (br) { br.disabled = dis; br.title = dis ? (id ? 'Add an email address above' : 'Save the customer first') : 'Send paid / receipt confirmation'; }
+      if (pp) { pp.disabled = !id; pp.title = id ? 'Preview payment request template' : 'Save the customer first'; }
+      if (pr) { pr.disabled = !id; pr.title = id ? 'Preview paid/receipt template' : 'Save the customer first'; }
+    }
+
+    function isPositiveMoney(value) {
+      const n = parseFloat(value);
+      return Number.isFinite(n) && n > 0;
     }
 
     function renewalBadge(c) {
@@ -278,6 +313,26 @@
       if (res.ok) openEditModal(await res.json());
     }
 
+    async function populateLtKeyOptions(currentKey) {
+      const sel = document.getElementById('lt-key-number');
+      if (!sel) return;
+      sel.innerHTML = '<option value="">-- No LT key assigned --</option>';
+      const res = await fetch('/api/keybox');
+      if (!res.ok) return;
+      const data = await res.json();
+      const current = currentKey != null && currentKey !== '' ? Number(currentKey) : null;
+      const available = (data.keys || []).filter(k =>
+        k.status === 'available' || (current != null && Number(k.key_number) === current)
+      );
+      available.forEach(k => {
+        const opt = document.createElement('option');
+        opt.value = k.key_number;
+        opt.textContent = `Key ${k.key_number}`;
+        sel.appendChild(opt);
+      });
+      if (current != null) sel.value = String(current);
+    }
+
     function openEditModal(lt) {
       document.getElementById('lt-id').value = lt.id;
       document.getElementById('lt-modal-title').textContent = `Edit Long Term - ${lt.lt_number}`;
@@ -295,6 +350,9 @@
       if (ca) ca.value = lt.contract_amount != null && lt.contract_amount !== '' ? parseFloat(lt.contract_amount).toFixed(2) : '';
       const ps = document.getElementById('lt-payment-status');
       if (ps) ps.value = lt.payment_status || 'Unpaid';
+      const ks = document.getElementById('lt-key-status');
+      if (ks) ks.value = lt.key_in_yard ? 'in_yard' : 'released';
+      populateLtKeyOptions(lt.key_number || null);
       document.getElementById('btn-delete-lt').style.display = 'inline-block';
       updateLtEmailButtons();
       new bootstrap.Modal('#ltModal').show();
@@ -317,8 +375,10 @@
       document.getElementById('lt-rego2').value = '';
       document.getElementById('lt-phone').value = '';
       document.getElementById('lt-email').value = '';
-      document.getElementById('lt-rate').value = '120.00';
+      document.getElementById('lt-rate').value = LT_DEFAULT_MONTHLY.toFixed(2);
       document.getElementById('lt-rate-period').value = 'monthly';
+      document.getElementById('lt-key-number').innerHTML = '<option value="">-- No LT key assigned --</option>';
+      document.getElementById('lt-key-status').value = 'released';
       document.getElementById('lt-expiry').value = addMonthsYmd(localDateStr(new Date()), 3);
       applyTermMonths(3);
       document.getElementById('lt-notes').value = '';
@@ -353,6 +413,24 @@
         updateLtEmailButtons();
       }
     }
+    async function previewLtEmail(kind) {
+      const id = document.getElementById('lt-id').value;
+      if (!id) { showAlert('Save the customer first', 'warning'); return; }
+      const res = await fetch(`/api/email/longterm/${id}/preview?type=${encodeURIComponent(kind)}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showAlert(err.error || 'Preview failed', 'danger');
+        return;
+      }
+      const html = await res.text();
+      const w = window.open('', '_blank');
+      if (!w) { showAlert('Popup blocked - allow popups to preview email', 'warning'); return; }
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+    }
+    document.getElementById('btn-preview-lt-pay').addEventListener('click', () => previewLtEmail('payment'));
+    document.getElementById('btn-preview-lt-rcpt').addEventListener('click', () => previewLtEmail('receipt'));
     document.getElementById('btn-email-lt-pay').addEventListener('click', () => postLtEmail('payment-request'));
     document.getElementById('btn-email-lt-rcpt').addEventListener('click', () => postLtEmail('receipt'));
 
@@ -374,6 +452,10 @@
       };
 
       if (!payload.name) { showAlert('Name is required', 'danger'); return; }
+      if (!isPositiveMoney(payload.rate) && !isPositiveMoney(payload.contract_amount)) {
+        showAlert('Set either Monthly Rate > 0 or Contract term total > 0', 'danger');
+        return;
+      }
 
       let res;
       if (id) {
@@ -394,6 +476,23 @@
         const saved = await res.json();
         if (saved && saved.id) {
           document.getElementById('lt-id').value = saved.id;
+        }
+        if (saved && saved.id) {
+          const keyAction = document.getElementById('lt-key-status').value === 'in_yard' ? 'assign' : 'release';
+          const keyPayload = {
+            action: keyAction,
+            key_number: keyAction === 'assign' ? (document.getElementById('lt-key-number').value || null) : null
+          };
+          const keyRes = await fetch(`/api/longterm/${saved.id}/keybox`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(keyPayload)
+          });
+          if (!keyRes.ok) {
+            const err = await keyRes.json().catch(() => ({}));
+            showAlert(err.error || 'LT key update failed', 'danger');
+            return;
+          }
         }
         showAlert(id ? 'Long term customer updated' : 'Long term customer added', 'success');
         updateLtEmailButtons();

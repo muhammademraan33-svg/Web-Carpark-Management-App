@@ -8,9 +8,11 @@ router.get('/', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
     const keys = await db.prepare(`
-      SELECT k.*, i.invoice_number, i.first_name, i.last_name, i.rego, i.return_date
+      SELECT k.*, i.invoice_number, i.first_name, i.last_name, i.rego, i.return_date,
+             lt.lt_number, lt.name as lt_name, lt.rego_1 as lt_rego_1, lt.rego_2 as lt_rego_2
       FROM key_box k
       LEFT JOIN invoices i ON k.invoice_id = i.id AND i.void = 0
+      LEFT JOIN longterm_customers lt ON k.longterm_customer_id = lt.id
       WHERE k.carpark_id = ?
       ORDER BY k.key_number
     `).all(carparkId);

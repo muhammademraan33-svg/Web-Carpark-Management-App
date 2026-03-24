@@ -126,7 +126,7 @@
               </div>
               <div class="col-md-4">
                 <label class="form-label">Stay (Nights)</label>
-                <input type="number" class="form-control fw-bold" id="inv-nights" min="0" value="1" readonly style="background:#eaf0fb;">
+                <input type="number" class="form-control fw-bold" id="inv-nights" min="0" value="1" style="background:#eaf0fb;" title="You can edit nights directly">
               </div>
               <div class="col-md-4">
                 <label class="form-label">Return Date</label>
@@ -218,6 +218,9 @@
             <button type="button" class="btn btn-calculate w-100 mb-2" id="btn-calculate">
               <i class="bi bi-calculator me-1"></i> Calculate Price
             </button>
+            <div class="small mb-2" id="pricing-mode-label">
+              <span class="badge bg-secondary-subtle text-secondary-emphasis">Mode: Manual / Short-stay</span>
+            </div>
             <div class="row g-2 align-items-center">
               <div class="col-4">
                 <label class="form-label fw-bold">Total Price $</label>

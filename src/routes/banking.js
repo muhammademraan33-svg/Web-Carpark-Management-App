@@ -35,6 +35,54 @@ router.post('/', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/banking/autofill?date=YYYY-MM-DD
+// Builds banking fields directly from invoice payment lines:
+// - payment 1: paid_status + payment_amount
+// - payment 2: paid_status_2 + payment_amount_2
+router.get('/autofill', requireAuth, async (req, res) => {
+  try {
+    const carparkId = req.session.carparkId || 1;
+    const date = req.query.date || new Date().toISOString().split('T')[0];
+    const rows = await db.prepare(`
+      SELECT paid_status, payment_amount, paid_status_2, payment_amount_2
+      FROM invoices
+      WHERE carpark_id = ? AND DATE(date_in) = ? AND void = 0
+    `).all(carparkId, date);
+
+    let eftpos = 0;
+    let cash = 0;
+    let account = 0;
+    let other = 0;
+
+    const addByStatus = (statusRaw, amountRaw) => {
+      const status = String(statusRaw || '').trim();
+      const amount = parseFloat(amountRaw || 0) || 0;
+      if (amount <= 0) return;
+      if (status === 'Eftpos') eftpos += amount;
+      else if (status === 'Cash') cash += amount;
+      else if (status === 'OnAcc') account += amount;
+      else if (status && status !== 'To Pay') other += amount;
+    };
+
+    for (const r of rows) {
+      addByStatus(r.paid_status, r.payment_amount);
+      addByStatus(r.paid_status_2, r.payment_amount_2);
+    }
+
+    const round2 = (n) => Math.round((n || 0) * 100) / 100;
+    res.json({
+      date,
+      eftpos: round2(eftpos),
+      cash: round2(cash),
+      account: round2(account),
+      other: round2(other),
+      total: round2(eftpos + cash + account + other)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/petty-cash', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;

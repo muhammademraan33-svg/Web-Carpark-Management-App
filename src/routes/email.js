@@ -305,6 +305,21 @@ router.post('/longterm/:id/payment-request', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/email/longterm/:id/preview?type=payment|receipt
+router.get('/longterm/:id/preview', requireAuth, async (req, res) => {
+  try {
+    const carparkId = req.session.carparkId || 1;
+    const kind = String(req.query.type || 'payment').toLowerCase() === 'receipt' ? 'receipt' : 'payment';
+    const lt = await db.prepare('SELECT * FROM longterm_customers WHERE id = ? AND carpark_id = ?').get(req.params.id, carparkId);
+    if (!lt) return res.status(404).json({ error: 'Long-term customer not found' });
+    const carpark = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(carparkId);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(longTermEmailHTML(carpark || {}, lt, kind));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/email/longterm/:id/receipt  (confirmation / receipt email)
 router.post('/longterm/:id/receipt', requireAuth, async (req, res) => {
   try {

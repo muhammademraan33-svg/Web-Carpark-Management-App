@@ -16,11 +16,13 @@ async function releaseKey(db, carparkId, keyNumber) {
   const kn = parseKeyNumber(keyNumber);
   if (kn == null) return;
   await db.prepare(`
-    INSERT INTO key_box (carpark_id, key_number, status, invoice_id)
-    VALUES (?, ?, 'available', NULL)
+    INSERT INTO key_box (carpark_id, key_number, status, invoice_id, longterm_customer_id, holder_type)
+    VALUES (?, ?, 'available', NULL, NULL, 'available')
     ON CONFLICT(carpark_id, key_number) DO UPDATE SET
       status = 'available',
-      invoice_id = NULL
+      invoice_id = NULL,
+      longterm_customer_id = NULL,
+      holder_type = 'available'
   `).run(carparkId, kn);
 }
 
@@ -30,12 +32,29 @@ async function assignKeyToInvoice(db, carparkId, keyNumber, invoiceId) {
   if (kn == null) return;
   const iid = typeof invoiceId === 'bigint' ? Number(invoiceId) : invoiceId;
   await db.prepare(`
-    INSERT INTO key_box (carpark_id, key_number, status, invoice_id)
-    VALUES (?, ?, 'in_use', ?)
+    INSERT INTO key_box (carpark_id, key_number, status, invoice_id, longterm_customer_id, holder_type)
+    VALUES (?, ?, 'in_use', ?, NULL, 'invoice')
     ON CONFLICT(carpark_id, key_number) DO UPDATE SET
       status = 'in_use',
-      invoice_id = excluded.invoice_id
+      invoice_id = excluded.invoice_id,
+      longterm_customer_id = NULL,
+      holder_type = 'invoice'
   `).run(carparkId, kn, iid);
+}
+
+async function assignKeyToLongTerm(db, carparkId, keyNumber, longtermCustomerId) {
+  const kn = parseKeyNumber(keyNumber);
+  if (kn == null) return;
+  const lid = typeof longtermCustomerId === 'bigint' ? Number(longtermCustomerId) : longtermCustomerId;
+  await db.prepare(`
+    INSERT INTO key_box (carpark_id, key_number, status, invoice_id, longterm_customer_id, holder_type)
+    VALUES (?, ?, 'in_use', NULL, ?, 'longterm')
+    ON CONFLICT(carpark_id, key_number) DO UPDATE SET
+      status = 'in_use',
+      invoice_id = NULL,
+      longterm_customer_id = excluded.longterm_customer_id,
+      holder_type = 'longterm'
+  `).run(carparkId, kn, lid);
 }
 
 /**
@@ -56,4 +75,4 @@ async function syncKeyBoxForPickedUp(db, carparkId, invoiceId, invoiceRow, picke
   }
 }
 
-module.exports = { parseKeyNumber, releaseKey, assignKeyToInvoice, syncKeyBoxForPickedUp };
+module.exports = { parseKeyNumber, releaseKey, assignKeyToInvoice, assignKeyToLongTerm, syncKeyBoxForPickedUp };
