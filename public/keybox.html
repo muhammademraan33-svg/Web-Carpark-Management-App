@@ -18,6 +18,7 @@
         <button class="btn btn-sm btn-outline-success" id="btn-add-key"><i class="bi bi-plus-lg me-1"></i>Add Key</button>
         <span class="badge bg-success fs-6 align-self-center" id="available-count">-- Available</span>
         <span class="badge bg-danger fs-6 align-self-center" id="inuse-count">-- In Use</span>
+        <span class="badge bg-warning text-dark fs-6 align-self-center" id="lt-inyard-count">-- LT In Yard</span>
       </div>
     </div>
 
@@ -37,6 +38,10 @@
     <div id="key-grid" class="key-grid">
       <div class="text-center py-4 text-muted col-span-all"><div class="spinner-border"></div></div>
     </div>
+    <div class="mt-4 mb-2 fw-bold text-muted">Long Term Locker (LT1, LT2...)</div>
+    <div id="lt-key-grid" class="key-grid">
+      <div class="text-center py-3 text-muted col-span-all">No LT keys assigned.</div>
+    </div>
   </div>
 
   <!-- Key Detail Modal -->
@@ -54,6 +59,7 @@
           <a href="#" class="btn btn-primary" id="key-invoice-link">View Invoice</a>
           <a href="#" class="btn btn-outline-primary" id="key-longterm-link">Open Long Term</a>
           <button type="button" class="btn btn-outline-success" id="btn-release-key">Release Key</button>
+          <button type="button" class="btn btn-outline-danger" id="btn-remove-key">Remove Key</button>
         </div>
       </div>
     </div>
@@ -95,41 +101,47 @@
 
       document.getElementById('available-count').textContent = `${data.available} Available`;
       document.getElementById('inuse-count').textContent = `${data.inUse} In Use`;
+      document.getElementById('lt-inyard-count').textContent = `${data.ltInYard || 0} LT In Yard`;
 
       const grid = document.getElementById('key-grid');
       grid.innerHTML = data.keys.map(k => {
         const inUse    = k.status === 'in_use';
         const cssClass = inUse ? 'in-use' : 'available';
-        // Store invoice_id as its own plain attribute – no JSON parsing needed on click
-        const invIdAttr = inUse && k.invoice_id ? `data-invoice-id="${k.invoice_id}"` : '';
-        const ltIdAttr = inUse && k.longterm_customer_id ? `data-lt-id="${k.longterm_customer_id}"` : '';
-        const cursorStyle = inUse ? 'cursor:pointer;' : '';
+        const invIdAttr = k.invoice_id ? `data-invoice-id="${k.invoice_id}"` : '';
+        const cursorStyle = 'cursor:pointer;';
         const titleTxt = inUse
-          ? (k.invoice_id
-            ? `Open booking: ${k.first_name||''} ${k.last_name||''} (${k.rego||''})`
-            : `Long-term: ${k.lt_number||''} ${k.lt_name||''}`)
+          ? `Open booking: ${k.first_name||''} ${k.last_name||''} (${k.rego||''})`
           : 'Available';
-        const holderBadge = inUse
-          ? (k.longterm_customer_id
-            ? `<span class="badge bg-warning text-dark ms-1" style="font-size:10px;">LT</span>`
-            : `<span class="badge bg-primary ms-1" style="font-size:10px;">INV</span>`)
-          : '';
         const nameTxt = inUse
-          ? (k.invoice_id
-            ? `<span class="key-name">${(k.last_name||'').substring(0,8) || 'In Use'}</span>`
-            : `<span class="key-name">${(k.lt_number||'LT').substring(0,8)}</span>`)
+          ? `<span class="key-name">${(k.last_name||'').substring(0,8) || 'In Use'}</span>`
           : `<span class="key-name text-muted">Free</span>`;
-        return `<div class="key-item ${cssClass}" ${invIdAttr} ${ltIdAttr} style="${cursorStyle}" title="${titleTxt}">
+        return `<div class="key-item ${cssClass}" data-status="${k.status}" data-key-number="${k.key_number}" ${invIdAttr} style="${cursorStyle}" title="${titleTxt}">
           <span class="key-num" style="pointer-events:none">${k.key_number}</span>
-          <span style="pointer-events:none">${nameTxt}${holderBadge}</span>
+          <span style="pointer-events:none">${nameTxt}</span>
         </div>`;
       }).join('');
+
+      const ltGrid = document.getElementById('lt-key-grid');
+      const ltKeys = data.ltKeys || [];
+      if (ltKeys.length === 0) {
+        ltGrid.innerHTML = '<div class="text-center py-3 text-muted col-span-all">No LT keys assigned.</div>';
+      } else {
+        ltGrid.innerHTML = ltKeys.map(k => {
+          const inYard = Number(k.in_yard) === 1;
+          return `<div class="key-item ${inYard ? 'in-use' : 'available'}" data-lt-id="${k.id}" data-lt-slot="${k.key_number}" data-lt-inyard="${inYard ? 1 : 0}" style="cursor:pointer;" title="${k.lt_number} ${k.name}">
+            <span class="key-num" style="pointer-events:none">LT${k.key_number}</span>
+            <span style="pointer-events:none"><span class="key-name">${(k.name||'').substring(0,10) || k.lt_number}</span></span>
+          </div>`;
+        }).join('');
+      }
     }
 
     function showKeyDetail(k) {
       currentKey = k;
-      document.getElementById('key-modal-title').textContent = `Key #${k.key_number}`;
-      document.getElementById('key-modal-body').innerHTML = k.invoice_number ? `
+      const isLt = !!k.longterm_customer_id;
+      const isInUse = (k.status === 'in_use') || !!k.lt_in_yard;
+      document.getElementById('key-modal-title').textContent = isLt ? `LT${k.key_number}` : `Key #${k.key_number}`;
+      document.getElementById('key-modal-body').innerHTML = (!isLt && k.invoice_number) ? `
         <table class="table table-sm">
           <tr><th>Invoice #</th><td><strong>${k.invoice_number}</strong></td></tr>
           <tr><th>Customer</th><td>${k.first_name||''} ${k.last_name||''}</td></tr>
@@ -137,27 +149,35 @@
           <tr><th>Return Date</th><td>${k.return_date ? formatDateShort(k.return_date) : 'Unknown'}</td></tr>
           <tr><th>Status</th><td><span class="badge bg-danger">In Use</span></td></tr>
         </table>
-      ` : (k.longterm_customer_id ? `
+      ` : (isLt ? `
         <table class="table table-sm">
           <tr><th>Holder</th><td><strong>${k.lt_number || ''} - ${k.lt_name || ''}</strong></td></tr>
           <tr><th>Rego</th><td><strong>${k.lt_rego_1 || k.lt_rego_2 || '—'}</strong></td></tr>
-          <tr><th>Status</th><td><span class="badge bg-warning text-dark">Long Term In Yard</span></td></tr>
+          <tr><th>Status</th><td>${isInUse ? '<span class="badge bg-warning text-dark">Long Term In Yard</span>' : '<span class="badge bg-secondary">Released</span>'}</td></tr>
         </table>
-      ` : `<p class="text-muted">Key in use but no linked holder found.</p>`);
+      ` : `<p class="text-muted">${isInUse ? 'Key in use but no linked holder found.' : 'This key slot is currently available.'}</p>`);
 
       const invLink = document.getElementById('key-invoice-link');
       const ltLink = document.getElementById('key-longterm-link');
-      if (k.invoice_id) {
+      const relBtn = document.getElementById('btn-release-key');
+      const rmBtn = document.getElementById('btn-remove-key');
+      if (!isLt && k.invoice_id) {
         invLink.href = `/invoice.html?id=${k.invoice_id}`;
         invLink.style.display = 'inline-block';
         ltLink.style.display = 'none';
-      } else if (k.longterm_customer_id) {
+        relBtn.style.display = 'inline-block';
+        rmBtn.style.display = 'none';
+      } else if (isLt && k.longterm_customer_id) {
         ltLink.href = '/longterm.html';
         ltLink.style.display = 'inline-block';
         invLink.style.display = 'none';
+        relBtn.style.display = isInUse ? 'inline-block' : 'none';
+        rmBtn.style.display = 'none';
       } else {
         invLink.style.display = 'none';
         ltLink.style.display = 'none';
+        relBtn.style.display = 'none';
+        rmBtn.style.display = isInUse ? 'none' : 'inline-block';
       }
 
       new bootstrap.Modal('#keyModal').show();
@@ -165,33 +185,58 @@
 
     // ── Event delegation: one listener handles all key clicks, even after grid refresh ──
     document.getElementById('key-grid').addEventListener('click', async (e) => {
-      // Walk up to the key-item div (inner spans have pointer-events:none so e.target IS the div)
-      const keyEl = e.target.closest('.key-item.in-use');
+      const keyEl = e.target.closest('.key-item');
       if (!keyEl) return;
       const invoiceId = keyEl.getAttribute('data-invoice-id');
       const ltId = keyEl.getAttribute('data-lt-id');
       if (invoiceId) {
         window.location.href = `/invoice.html?id=${invoiceId}`;
       } else if (ltId) {
-        const res = await fetch('/api/keybox');
-        if (!res.ok) return;
-        const data = await res.json();
-        const row = (data.keys || []).find(k => String(k.longterm_customer_id || '') === String(ltId) && String(k.key_number) === String(keyEl.querySelector('.key-num')?.textContent || ''));
-        if (row) showKeyDetail(row);
-        else window.location.href = '/longterm.html';
+        const row = {
+          longterm_customer_id: Number(ltId),
+          key_number: Number(keyEl.getAttribute('data-lt-slot')),
+          lt_in_yard: Number(keyEl.getAttribute('data-lt-inyard')) === 1,
+          lt_number: `LT${keyEl.getAttribute('data-lt-slot')}`,
+          lt_name: keyEl.querySelector('.key-name')?.textContent || ''
+        };
+        showKeyDetail(row);
       } else {
-        showAlert('No booking linked to this key yet.', 'warning');
+        showKeyDetail({
+          key_number: Number(keyEl.getAttribute('data-key-number')),
+          status: keyEl.getAttribute('data-status') || 'available'
+        });
       }
     });
 
     document.getElementById('btn-release-key').addEventListener('click', async () => {
       if (!currentKey) return;
-      if (!confirm(`Release Key #${currentKey.key_number}?`)) return;
-      const res = await fetch(`/api/keybox/${currentKey.key_number}/release`, { method: 'POST' });
+      const isLt = !!currentKey.longterm_customer_id;
+      if (!confirm(`Release ${isLt ? `LT${currentKey.key_number}` : `Key #${currentKey.key_number}`}?`)) return;
+      const res = isLt
+        ? await fetch(`/api/longterm/${currentKey.longterm_customer_id}/keybox`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'release' })
+          })
+        : await fetch(`/api/keybox/${currentKey.key_number}/release`, { method: 'POST' });
       if (res.ok) {
-        showAlert(`Key #${currentKey.key_number} released`, 'success');
+        showAlert(`${isLt ? `LT${currentKey.key_number}` : `Key #${currentKey.key_number}`} released`, 'success');
         bootstrap.Modal.getInstance('#keyModal').hide();
         loadKeyBox();
+      }
+    });
+
+    document.getElementById('btn-remove-key').addEventListener('click', async () => {
+      if (!currentKey || currentKey.status === 'in_use') return;
+      if (!confirm(`Remove Key #${currentKey.key_number} from Standard locker?`)) return;
+      const res = await fetch(`/api/keybox/${currentKey.key_number}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        showAlert(`Key #${currentKey.key_number} removed`, 'success');
+        bootstrap.Modal.getInstance('#keyModal').hide();
+        loadKeyBox();
+      } else {
+        showAlert(data.error || 'Failed to remove key', 'danger');
       }
     });
 

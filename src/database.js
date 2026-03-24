@@ -225,6 +225,8 @@ async function initializeDatabase() {
 
   try { x(`ALTER TABLE longterm_customers ADD COLUMN contract_amount REAL`); } catch (_) {}
   try { x(`ALTER TABLE longterm_customers ADD COLUMN payment_status TEXT DEFAULT 'Unpaid'`); } catch (_) {}
+  try { x(`ALTER TABLE longterm_customers ADD COLUMN lt_key_slot INTEGER`); } catch (_) {}
+  try { x(`ALTER TABLE longterm_customers ADD COLUMN lt_in_yard INTEGER DEFAULT 0`); } catch (_) {}
   try { x(`UPDATE longterm_customers SET payment_status = 'Unpaid' WHERE payment_status IS NULL OR payment_status = ''`); } catch (_) {}
 
   x(`CREATE TABLE IF NOT EXISTS account_customers (
@@ -315,6 +317,8 @@ async function initializeDatabase() {
   try { x(`UPDATE key_box SET holder_type = 'available' WHERE status = 'available'`); } catch (_) {}
   try { x(`UPDATE key_box SET holder_type = 'invoice' WHERE status = 'in_use' AND invoice_id IS NOT NULL`); } catch (_) {}
   try { x(`UPDATE key_box SET holder_type = 'longterm' WHERE status = 'in_use' AND longterm_customer_id IS NOT NULL`); } catch (_) {}
+  // LT locker is now separate from Standard key_box; free any legacy LT-held standard rows.
+  try { x(`UPDATE key_box SET status='available', invoice_id=NULL, longterm_customer_id=NULL, holder_type='available' WHERE holder_type='longterm' OR longterm_customer_id IS NOT NULL`); } catch (_) {}
 
   x(`CREATE TABLE IF NOT EXISTS petty_cash (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

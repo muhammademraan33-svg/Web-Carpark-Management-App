@@ -318,19 +318,21 @@
       const sel = document.getElementById('lt-key-number');
       if (!sel) return;
       sel.innerHTML = '<option value="">-- No LT key assigned --</option>';
-      const res = await fetch('/api/keybox');
+      const meId = parseInt(document.getElementById('lt-id').value || '0', 10);
+      const res = await fetch('/api/longterm');
       if (!res.ok) return;
       const data = await res.json();
       const current = currentKey != null && currentKey !== '' ? Number(currentKey) : null;
-      const available = (data.keys || []).filter(k =>
-        k.status === 'available' || (current != null && Number(k.key_number) === current)
-      );
-      available.forEach(k => {
+      const used = new Set((data || [])
+        .filter(c => c.id !== meId && c.lt_key_slot != null)
+        .map(c => Number(c.lt_key_slot)));
+      for (let i = 1; i <= 60; i += 1) {
+        if (used.has(i) && i !== current) continue;
         const opt = document.createElement('option');
-        opt.value = k.key_number;
-        opt.textContent = `Key ${k.key_number}`;
+        opt.value = i;
+        opt.textContent = `LT${i}`;
         sel.appendChild(opt);
-      });
+      }
       if (current != null) {
         sel.value = String(current);
         return;

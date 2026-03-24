@@ -1,7 +1,7 @@
 const express = require('express');
 const { db } = require('../database');
 const { requireAuth } = require('../middleware/auth');
-const { parseKeyNumber, releaseKey, assignKeyToLongTerm } = require('../utils/keyBoxSync');
+const { parseKeyNumber } = require('../utils/keyBoxSync');
 const router = express.Router();
 
 function normalizedMoney(val) {
@@ -86,16 +86,10 @@ router.get('/:id', requireAuth, async (req, res) => {
   try {
     const customer = await db.prepare('SELECT * FROM longterm_customers WHERE id = ?').get(req.params.id);
     if (!customer) return res.status(404).json({ error: 'Not found' });
-    const kb = await db.prepare(`
-      SELECT key_number, status, holder_type
-      FROM key_box
-      WHERE carpark_id = ? AND longterm_customer_id = ?
-      LIMIT 1
-    `).get(req.session.carparkId || 1, req.params.id);
     res.json({
       ...withRenewalStatus(customer, ymdToday()),
-      key_number: kb ? kb.key_number : null,
-      key_in_yard: !!(kb && kb.status === 'in_use')
+      key_number: customer.lt_key_slot || null,
+      key_in_yard: !!customer.lt_in_yard
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -109,8 +103,7 @@ router.post('/:id/keybox', requireAuth, async (req, res) => {
     if (!lt || lt.active !== 1) return res.status(404).json({ error: 'Long-term customer not found' });
 
     if (action === 'release') {
-      const cur = await db.prepare(`SELECT key_number FROM key_box WHERE carpark_id = ? AND longterm_customer_id = ? AND status = 'in_use' LIMIT 1`).get(carparkId, ltId);
-      if (cur && cur.key_number != null) await releaseKey(db, carparkId, cur.key_number);
+      await db.prepare(`UPDATE longterm_customers SET lt_in_yard = 0 WHERE id = ? AND carpark_id = ?`).run(ltId, carparkId);
       return res.json({ success: true, key_number: null, key_in_yard: false });
     }
 
@@ -123,24 +116,18 @@ router.post('/:id/keybox', requireAuth, async (req, res) => {
     if (kn == null) return res.status(400).json({ error: 'Key number is required' });
 
     const conflict = await db.prepare(`
-      SELECT k.*, i.invoice_number, lt.lt_number
-      FROM key_box k
-      LEFT JOIN invoices i ON k.invoice_id = i.id AND i.void = 0
-      LEFT JOIN longterm_customers lt ON k.longterm_customer_id = lt.id
-      WHERE k.carpark_id = ? AND k.key_number = ? AND k.status = 'in_use'
+      SELECT id, lt_number, name
+      FROM longterm_customers
+      WHERE carpark_id = ? AND active = 1 AND lt_key_slot = ?
       LIMIT 1
     `).get(carparkId, kn);
     if (conflict) {
-      const sameLt = conflict.longterm_customer_id && Number(conflict.longterm_customer_id) === ltId;
+      const sameLt = Number(conflict.id) === ltId;
       if (!sameLt) {
-        const owner = conflict.invoice_id ? `Invoice #${conflict.invoice_number || conflict.invoice_id}` : `Long-term ${conflict.lt_number || ''}`.trim();
-        return res.status(400).json({ error: `Key ${kn} is already in use by ${owner}` });
+        return res.status(400).json({ error: `LT key ${kn} is already in use by ${conflict.lt_number} (${conflict.name})` });
       }
     }
-
-    const current = await db.prepare(`SELECT key_number FROM key_box WHERE carpark_id = ? AND longterm_customer_id = ? AND status = 'in_use' LIMIT 1`).get(carparkId, ltId);
-    if (current && Number(current.key_number) !== kn) await releaseKey(db, carparkId, current.key_number);
-    await assignKeyToLongTerm(db, carparkId, kn, ltId);
+    await db.prepare(`UPDATE longterm_customers SET lt_key_slot = ?, lt_in_yard = 1 WHERE id = ? AND carpark_id = ?`).run(kn, ltId, carparkId);
     res.json({ success: true, key_number: kn, key_in_yard: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -211,9 +198,6 @@ router.put('/:id', requireAuth, async (req, res) => {
 
 router.delete('/:id', requireAuth, async (req, res) => {
   try {
-    const carparkId = req.session.carparkId || 1;
-    const cur = await db.prepare(`SELECT key_number FROM key_box WHERE carpark_id = ? AND longterm_customer_id = ? AND status = 'in_use' LIMIT 1`).get(carparkId, req.params.id);
-    if (cur && cur.key_number != null) await releaseKey(db, carparkId, cur.key_number);
     // Hard delete so `lt_number` (UNIQUE) is actually free to reuse.
     // Soft-delete would keep the lt_number occupied and block "next" numbering.
     await db.prepare('DELETE FROM longterm_customers WHERE id = ?').run(req.params.id);
