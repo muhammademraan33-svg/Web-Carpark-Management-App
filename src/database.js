@@ -1,10 +1,10 @@
 /**
  * database.js — sql.js SQLite (single backend, no external services)
  *
- * Data is kept in an sql.js in-memory database and flushed to a file:
- *   • Local / Railway / Render  →  <project-root>/carpark.db
- *   • Vercel (serverless)       →  /tmp/carpark.db  (persists within a
- *                                   container, NOT across cold-starts)
+ * Data is flushed to a single SQLite file (see resolveDbFilePath below).
+ *   • Local dev      → project-root carpark.db (should be gitignored)
+ *   • Railway/Render → /data/carpark.db when detected (mount a volume at /data)
+ *   • Vercel         → /tmp/carpark.db (ephemeral across cold-starts)
  *
  * All route handlers must await every db call:
  *   const row  = await db.prepare('SELECT …').get(p1, p2);
@@ -23,20 +23,81 @@ let _db  = null;  // sql.js Database instance
 
 // ─── Database path resolution ─────────────────────────────────────────────────
 //
-//  Platform          | Path used
-//  ──────────────────|──────────────────────────────────────────────────────────
-//  Local / Railway   | <project-root>/carpark.db  (writable persistent disk)
-//  Railway + Volume  | $DB_FILE_PATH (set in Railway env vars, e.g. /data/carpark.db)
-//  Vercel serverless | /tmp/carpark.db  (writable but ephemeral per-container)
+//  CRITICAL (Railway / production):
+//  • Do NOT use <project-root>/carpark.db on Railway — that file is part of the
+//    deploy bundle from Git; every push replaces it and wipes production data.
+//  • Set DB_FILE_PATH=/data/carpark.db and mount a Railway Volume at /data.
+//  • Without a volume, /data may still be ephemeral on some setups — use a volume.
 //
-//  On Railway with a Volume mounted at /data, set env var DB_FILE_PATH=/data/carpark.db
-//  The app will bootstrap from the committed seed file on first run, then
-//  persist ALL changes to the volume — surviving restarts AND re-deployments.
+//  Local dev:
+//  • <project-root>/carpark.db (gitignored, not committed)
 //
-const COMMITTED_DB = path.join(__dirname, '..', 'carpark.db'); // always in repo
-const DB_PATH = process.env.DB_FILE_PATH          // Railway volume override
-  || (process.env.VERCEL ? '/tmp/carpark.db'      // Vercel serverless (ephemeral)
-  : COMMITTED_DB);                                // local / default
+//  Optional env:
+//  • BOOTSTRAP_DB_FROM_PATH — one-time restore: copy this file to DB_PATH if DB missing
+//
+const PROJECT_ROOT = path.join(__dirname, '..');
+const LEGACY_REPO_DB = path.join(PROJECT_ROOT, 'carpark.db');
+const SEED_DB = path.join(PROJECT_ROOT, 'carpark.seed.db');
+
+function resolveDbFilePath() {
+  if (process.env.DB_FILE_PATH) return path.resolve(process.env.DB_FILE_PATH);
+  if (process.env.VERCEL) return '/tmp/carpark.db';
+  const isCloudHost =
+    process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID
+    || process.env.RENDER || process.env.RENDER_SERVICE_NAME;
+  // When carpark.db is committed in the repo, use it on the deploy image so GitHub push = live data.
+  // Otherwise fall back to a persistent volume path (set DB_FILE_PATH=/data/carpark.db explicitly if needed).
+  if (isCloudHost && fs.existsSync(LEGACY_REPO_DB)) {
+    return LEGACY_REPO_DB;
+  }
+  if (isCloudHost) {
+    return '/data/carpark.db';
+  }
+  return LEGACY_REPO_DB;
+}
+
+const DB_PATH = resolveDbFilePath();
+
+function isSqliteFile(p) {
+  try {
+    const fd = fs.openSync(p, 'r');
+    const buf = Buffer.alloc(16);
+    fs.readSync(fd, buf, 0, 16, 0);
+    fs.closeSync(fd);
+    return buf.slice(0, 16).equals(Buffer.from('SQLite format 3\0'));
+  } catch (_) {
+    return false;
+  }
+}
+
+/** Ensure DB file exists before opening SQL.js (create dirs, optional one-time bootstrap). */
+function ensureDbFileBeforeOpen() {
+  if (fs.existsSync(DB_PATH)) return;
+
+  const dir = path.dirname(DB_PATH);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+  // One-time: restore from a backup path you control (e.g. Railway download of old DB)
+  const bootstrap = process.env.BOOTSTRAP_DB_FROM_PATH;
+  if (bootstrap && fs.existsSync(bootstrap) && isSqliteFile(bootstrap)) {
+    fs.copyFileSync(bootstrap, DB_PATH);
+    console.log(`[DB] Restored ${DB_PATH} from BOOTSTRAP_DB_FROM_PATH`);
+    return;
+  }
+
+  // Optional tiny template committed in repo (not your live dev carpark.db)
+  if (fs.existsSync(SEED_DB) && isSqliteFile(SEED_DB)) {
+    fs.copyFileSync(SEED_DB, DB_PATH);
+    console.log(`[DB] Bootstrapped ${DB_PATH} from carpark.seed.db`);
+    return;
+  }
+
+  // Otherwise: file stays missing → empty DB below + schema migrations.
+}
+
+function getDbFilePath() {
+  return DB_PATH;
+}
 
 // ─── Disk helpers ─────────────────────────────────────────────────────────────
 function saveToDisk() {
@@ -130,25 +191,18 @@ async function initializeDatabase() {
   }
 
   if (!_db) {
-    // If the live DB path doesn't exist yet, bootstrap from the committed seed
-    // file.  This handles three cases:
-    //   1. Vercel cold-start  (/tmp/carpark.db missing → copy seed)
-    //   2. Railway Volume first run (/data/carpark.db missing → copy seed,
-    //      then ALL future writes persist to the volume across deployments)
-    //   3. Fresh local checkout (carpark.db missing → copy seed, or create blank)
-    if (!fs.existsSync(DB_PATH) && DB_PATH !== COMMITTED_DB && fs.existsSync(COMMITTED_DB)) {
-      const dir = path.dirname(DB_PATH);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.copyFileSync(COMMITTED_DB, DB_PATH);
-      console.log(`[DB] Bootstrapped ${DB_PATH} from committed seed file`);
-    }
+    ensureDbFileBeforeOpen();
 
     if (fs.existsSync(DB_PATH)) {
       _db = new _SQL.Database(fs.readFileSync(DB_PATH));
       console.log(`[DB] Loaded existing database from ${DB_PATH}`);
     } else {
       _db = new _SQL.Database();
-      console.log(`[DB] Created new in-memory database (will save to ${DB_PATH})`);
+      console.log(`[DB] Created new database (will save to ${DB_PATH})`);
+    }
+
+    if (process.env.RAILWAY_ENVIRONMENT && String(DB_PATH).startsWith('/data')) {
+      console.log('[DB] Using /data/carpark.db — ensure Railway has a Volume mounted at /data so data survives redeploys.');
     }
 
     // Flush to disk every 10 seconds and on process exit
@@ -501,4 +555,22 @@ async function resetDatabase() {
   await initializeDatabase();
 }
 
-module.exports = { db, initializeDatabase, resetDatabase };
+/**
+ * Reload DB from disk after external file replace (e.g. admin import).
+ * Caller must not hold stale statement handles.
+ */
+async function reloadDatabase() {
+  if (!_SQL || !_db) return;
+  try {
+    saveToDisk();
+  } catch (_) {}
+  if (!fs.existsSync(DB_PATH)) return;
+  const buf = fs.readFileSync(DB_PATH);
+  try {
+    _db.close();
+  } catch (_) {}
+  _db = new _SQL.Database(buf);
+  console.log(`[DB] Reloaded from ${DB_PATH}`);
+}
+
+module.exports = { db, initializeDatabase, resetDatabase, getDbFilePath, reloadDatabase };

@@ -1,8 +1,8 @@
 # Dependencies
 node_modules/
 
-# Database is committed so Vercel deployments start with seed data.
-# DO NOT add carpark.db back here.
+# SQLite: carpark.db is committed intentionally so deploy matches repo (re-add carpark.db here if you want it local-only).
+*.db-journal
 
 # Environment variables (contains secrets)
 config.env
@@ -24,3 +24,6 @@ nul
 carpark-old*
 carpark-b64-*
 export-old.err
+
+# Local DB exports (e.g. Railway pull) — do not commit
+backups-railway/

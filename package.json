@@ -7,7 +7,9 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "check-returns": "node scripts/check-returns-sync.js",
-    "test-pickup-keybox": "node scripts/test-pickup-keybox-toggle.js"
+    "test-pickup-keybox": "node scripts/test-pickup-keybox-toggle.js",
+    "seed:nz": "node scripts/seed-nz-realistic.js --replace",
+    "verify:nz": "node scripts/verify-nz-seed.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

@@ -42,7 +42,7 @@ PROJECT STRUCTURE
 -----------------
   server.js           - Main server entry point
   config.env          - Environment variables (SMTP, port, etc.)
-  carpark.db          - SQLite database (auto-created on first run)
+  carpark.db          - SQLite database (may be committed so deploy matches repo; else auto-created)
   package.json        - Node.js dependencies
   src/
     database.js       - Database schema & seed data
@@ -152,9 +152,24 @@ RUNNING ON A DIFFERENT PORT
 
   Then access at: http://yourserver:8080
 
+RAILWAY / RENDER (HOSTED PAAS) — WHICH DATABASE FILE IS USED
+--------------------------------------------------------------
+  The app picks the DB path in src/database.js (resolveDbFilePath):
+
+  1. DB_FILE_PATH env (highest priority) — set to force a path, e.g. /data/carpark.db
+  2. On Railway/Render: if carpark.db exists in the deployed project root (/app/carpark.db),
+     that file is used — ideal when you commit carpark.db so each deploy matches GitHub.
+  3. Otherwise on Railway/Render: /data/carpark.db (use a Volume mounted at /data for data
+     that must survive without being in the repo).
+
+  Optional: BOOTSTRAP_DB_FROM_PATH — one-time copy to DB path when the target file is missing.
+
+  Check which file is in use: GET /api/status  ->  "db_path"
+
 BACKUP
 ------
-  The SQLite database is stored in: carpark.db
+  Local dev: SQLite database file is carpark.db (project root).
+  Railway/Render: typically /data/carpark.db on a persistent volume.
   Back this file up regularly (it contains all your data).
   The server also auto-saves every 10 seconds.
 

@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 const path = require('path');
 const cron = require('node-cron');
 
-const { db, initializeDatabase } = require('./src/database');
+const { db, initializeDatabase, getDbFilePath } = require('./src/database');
 
 const app = express();
 
@@ -90,7 +90,7 @@ app.get('/api/status', async (req, res) => {
     const keyAvail     = await db.prepare("SELECT COUNT(*) as c FROM key_box WHERE status = 'available'").get();
     res.json({
       mode: 'sql.js (file-backed SQLite)',
-      db_path: process.env.VERCEL ? '/tmp/carpark.db' : 'carpark.db',
+      db_path: getDbFilePath(),
       db_stats: { invoices: invoiceCount.c, keys_in_use: keyInUse.c, keys_available: keyAvail.c }
     });
   } catch (e) {
