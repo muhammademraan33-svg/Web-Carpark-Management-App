@@ -45,8 +45,7 @@ function resolveDbFilePath() {
   const isCloudHost =
     process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID
     || process.env.RENDER || process.env.RENDER_SERVICE_NAME;
-  // When carpark.db is committed in the repo, use it on the deploy image so GitHub push = live data.
-  // Otherwise fall back to a persistent volume path (set DB_FILE_PATH=/data/carpark.db explicitly if needed).
+  // When carpark.db is committed, the deploy image includes it at project root — use it so Git push updates live data.
   if (isCloudHost && fs.existsSync(LEGACY_REPO_DB)) {
     return LEGACY_REPO_DB;
   }

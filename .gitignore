@@ -1,7 +1,8 @@
 # Dependencies
 node_modules/
 
-# SQLite: carpark.db is committed intentionally so deploy matches repo (re-add carpark.db here if you want it local-only).
+# SQLite: carpark.db is tracked so deploy matches repo (re-add the line below to ignore local-only).
+# carpark.db
 *.db-journal
 
 # Environment variables (contains secrets)
