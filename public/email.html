@@ -147,7 +147,7 @@
         </div>
       `;
 
-      data.accounts.forEach(({account, invoices, total}) => {
+      data.accounts.forEach(({account, account_ids, invoices, total}) => {
         const rows = invoices.map(inv => {
           const dIn = inv.date_in ? new Date(inv.date_in).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short', year: '2-digit' }) : '';
           const dOut = inv.return_date ? new Date(inv.return_date).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short', year: '2-digit' }) : '';
@@ -166,7 +166,8 @@
               <h4 class="mb-0">${account.company_name}</h4>
               <div>
                 <span class="small text-muted me-2">To: ${account.billing_email || account.email || 'No email'}</span>
-                <input type="checkbox" class="form-check-input account-select-cb" data-id="${account.id}" checked>
+                <input type="checkbox" class="form-check-input account-select-cb"
+                  data-account-ids="${(account_ids && account_ids.length ? account_ids : [account.id]).join(',')}" checked>
               </div>
             </div>
             <table class="table table-sm table-bordered">
@@ -188,8 +189,15 @@
       const year = document.getElementById('email-year').value;
 
       // Get selected accounts
-      const selected = [];
-      document.querySelectorAll('.account-select-cb:checked').forEach(cb => selected.push(parseInt(cb.dataset.id)));
+      const selectedSet = new Set();
+      document.querySelectorAll('.account-select-cb:checked').forEach(cb => {
+        const idsStr = cb.dataset.accountIds || '';
+        idsStr.split(',').forEach(s => {
+          const n = parseInt(s, 10);
+          if (n) selectedSet.add(n);
+        });
+      });
+      const selected = Array.from(selectedSet);
 
       if (!confirm(`Send account statements for ${monthName(month)} ${year}${selected.length > 0 ? ` to ${selected.length} selected accounts` : ' to ALL accounts'}?`)) return;
 

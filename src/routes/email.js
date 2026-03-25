@@ -75,6 +75,16 @@ function buildAccountEmailHTML(carpark, account, invoices, total, monthName, yea
   </body></html>`;
 }
 
+function billingEmail(account) {
+  return String(account?.billing_email || account?.email || '').trim();
+}
+
+function recipientKey(account) {
+  const email = billingEmail(account);
+  if (email) return `email:${email.toLowerCase()}`;
+  return `name:${String(account?.company_name || '').trim().toLowerCase()}`;
+}
+
 // GET /api/email/preview
 router.get('/preview', requireAuth, async (req, res) => {
   try {
@@ -89,14 +99,41 @@ router.get('/preview', requireAuth, async (req, res) => {
     const carpark    = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(carparkId);
     const accounts   = await db.prepare('SELECT * FROM account_customers WHERE carpark_id = ? AND active = 1').all(carparkId);
 
-    const accountData = [];
+    // Group accounts so the same recipient doesn't get multiple separate preview blocks.
+    // Keyed by billing email (fallback: company name).
+    const byKey = new Map(); // key -> { account, account_ids: [], invoices: [], total }
+
     for (const account of accounts) {
-      const invoices = await db.prepare(`SELECT * FROM invoices WHERE account_customer_id = ? AND void = 0 AND DATE(date_in) >= ? AND DATE(date_in) <= ? ORDER BY date_in ASC`).all(account.id, startDate, endDate);
-      if (invoices.length > 0) {
-        const total = invoices.reduce((s, inv) => s + (inv.payment_amount || 0), 0);
-        accountData.push({ account, invoices, total });
+      const invoices = await db.prepare(`
+        SELECT * FROM invoices
+        WHERE account_customer_id = ?
+          AND void = 0
+          AND DATE(date_in) >= ?
+          AND DATE(date_in) <= ?
+        ORDER BY date_in ASC
+      `).all(account.id, startDate, endDate);
+
+      if (invoices.length === 0) continue;
+
+      const key = recipientKey(account);
+      if (!byKey.has(key)) {
+        byKey.set(key, { account, account_ids: [account.id], invoices: [], total: 0 });
       }
+
+      const g = byKey.get(key);
+      g.account_ids.push(account.id);
+      g.invoices.push(...invoices);
+      g.total += invoices.reduce((s, inv) => s + (inv.payment_amount || 0), 0);
+
+      // Prefer an account that has a billing email for the same group.
+      if (!billingEmail(g.account) && billingEmail(account)) g.account = account;
     }
+
+    const accountData = Array.from(byKey.values()).map(g => {
+      g.invoices.sort((a, b) => new Date(a.date_in).getTime() - new Date(b.date_in).getTime());
+      return { account: g.account, account_ids: g.account_ids, invoices: g.invoices, total: g.total };
+    });
+
     res.json({ month: m, year: y, monthName, carpark, accounts: accountData });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -125,30 +162,60 @@ router.post('/send-accounts', requireAuth, async (req, res) => {
     const transporter = getTransporter();
     const results = [];
 
+    // Group accounts by recipient so duplicate company entries don't produce multiple emails.
+    const byKey = new Map(); // key -> { account, account_ids: [] }
     for (const account of accounts) {
-      const invoices = await db.prepare(`SELECT * FROM invoices WHERE account_customer_id = ? AND void = 0 AND DATE(date_in) >= ? AND DATE(date_in) <= ? ORDER BY date_in ASC`).all(account.id, startDate, endDate);
+      const key = recipientKey(account);
+      if (!byKey.has(key)) {
+        byKey.set(key, { account, account_ids: [account.id] });
+      } else {
+        const g = byKey.get(key);
+        g.account_ids.push(account.id);
+        if (!billingEmail(g.account) && billingEmail(account)) g.account = account;
+      }
+    }
+
+    for (const g of Array.from(byKey.values())) {
+      const accountIds = g.account_ids;
+      const ph = accountIds.map(() => '?').join(',');
+      const invoices = await db.prepare(`
+        SELECT * FROM invoices
+        WHERE account_customer_id IN (${ph})
+          AND void = 0
+          AND DATE(date_in) >= ?
+          AND DATE(date_in) <= ?
+        ORDER BY date_in ASC
+      `).all(...accountIds, startDate, endDate);
+
       if (invoices.length === 0) {
-        results.push({ account: account.company_name, status: 'skipped', reason: 'No invoices this month' });
+        results.push({ account: g.account.company_name, status: 'skipped', reason: 'No invoices this month' });
         continue;
       }
-      const total   = invoices.reduce((s, inv) => s + (inv.payment_amount || 0), 0);
-      const emailTo = account.billing_email || account.email;
+
+      const total = invoices.reduce((s, inv) => s + (inv.payment_amount || 0), 0);
+      const emailTo = billingEmail(g.account);
       if (!emailTo) {
-        results.push({ account: account.company_name, status: 'failed', reason: 'No billing email' });
+        results.push({ account: g.account.company_name, status: 'failed', reason: 'No billing email' });
         await db.prepare(`INSERT INTO email_logs (carpark_id, account_customer_id, account_name, month, year, status, error_msg, recipient_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(carparkId, account.id, account.company_name, parseInt(m), parseInt(y), 'failed', 'No billing email', '');
+          .run(carparkId, g.account.id, g.account.company_name, parseInt(m), parseInt(y), 'failed', 'No billing email', '');
         continue;
       }
-      const html = buildAccountEmailHTML(carpark, account, invoices, total, monthName, y);
+
+      const html = buildAccountEmailHTML(carpark, g.account, invoices, total, monthName, y);
       try {
-        await transporter.sendMail({ from: emailFrom(), to: emailTo, subject: `${carpark.name} – ${monthName} ${y} Account Statement`, html });
-        results.push({ account: account.company_name, status: 'sent', email: emailTo, total });
+        await transporter.sendMail({
+          from: emailFrom(),
+          to: emailTo,
+          subject: `${carpark.name} – ${monthName} ${y} Account Statement`,
+          html,
+        });
+        results.push({ account: g.account.company_name, status: 'sent', email: emailTo, total });
         await db.prepare(`INSERT INTO email_logs (carpark_id, account_customer_id, account_name, month, year, sent_at, status, recipient_email) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`)
-          .run(carparkId, account.id, account.company_name, parseInt(m), parseInt(y), 'sent', emailTo);
+          .run(carparkId, g.account.id, g.account.company_name, parseInt(m), parseInt(y), 'sent', emailTo);
       } catch (sendErr) {
-        results.push({ account: account.company_name, status: 'failed', reason: sendErr.message });
+        results.push({ account: g.account.company_name, status: 'failed', reason: sendErr.message });
         await db.prepare(`INSERT INTO email_logs (carpark_id, account_customer_id, account_name, month, year, status, error_msg, recipient_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(carparkId, account.id, account.company_name, parseInt(m), parseInt(y), 'failed', sendErr.message, emailTo);
+          .run(carparkId, g.account.id, g.account.company_name, parseInt(m), parseInt(y), 'failed', sendErr.message, emailTo);
       }
     }
     res.json({ success: true, results });

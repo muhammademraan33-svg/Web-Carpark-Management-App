@@ -136,17 +136,17 @@ async function logout() {
   window.location.href = '/login.html';
 }
 
-// Calculate nights between two dates
+// Calculate nights/days between two dates
+// Pricing is per 24 hours, so the next calendar day should be 1 day (not 2).
 function calcNights(dateIn, dateOut) {
   if (!dateIn || !dateOut) return 0;
-  // Count inclusive calendar days so the drop-off day is included.
-  // Example: Mon -> Fri should be 5 (not 4).
   const [y1, m1, day1] = dateIn.split('-').map(Number);
   const [y2, m2, day2] = dateOut.split('-').map(Number);
   const t1 = Date.UTC(y1, m1 - 1, day1);
   const t2 = Date.UTC(y2, m2 - 1, day2);
   const diffDays = Math.round((t2 - t1) / (1000 * 60 * 60 * 24));
-  return Math.max(0, diffDays + 1);
+  // Keep a minimum charge of 1 day when dates are provided.
+  return diffDays <= 0 ? 1 : diffDays;
 }
 
 // Get month name

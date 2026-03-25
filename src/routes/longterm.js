@@ -181,16 +181,63 @@ router.post('/', requireAuth, async (req, res) => {
 
 router.put('/:id', requireAuth, async (req, res) => {
   try {
-    const { name, rego_1, rego_2, phone, email, rate, rate_period, expiry_date, notes, contract_amount, payment_status } = req.body;
+    const {
+      lt_number,
+      name, rego_1, rego_2, phone, email,
+      rate, rate_period, expiry_date, notes,
+      contract_amount, payment_status
+    } = req.body;
+
+    const carparkId = req.session.carparkId || 1;
+    const ltId = parseInt(req.params.id, 10);
+    if (!ltId) return res.status(400).json({ error: 'Invalid id' });
+
+    if (lt_number != null) {
+      const norm = String(lt_number).trim().toUpperCase();
+      const match = /^LT\s*(\d+)$/.exec(norm);
+      if (!match) return res.status(400).json({ error: 'Invalid LT # format (example: LT9)' });
+
+      const nextLtNumber = `LT${parseInt(match[1], 10)}`;
+      const conflict = await db.prepare(`
+        SELECT id, active
+        FROM longterm_customers
+        WHERE carpark_id = ?
+          AND lt_number = ?
+          AND id != ?
+        LIMIT 1
+      `).get(carparkId, nextLtNumber, ltId);
+
+      if (conflict && conflict.active === 1) {
+        return res.status(400).json({ error: 'LT number already exists' });
+      }
+      if (conflict && conflict.active !== 1) {
+        // If there is a non-active row holding the number, remove it to free the unique constraint.
+        await db.prepare('DELETE FROM longterm_customers WHERE id = ? AND carpark_id = ?').run(conflict.id, carparkId);
+      }
+
+      // Use normalized value for the update.
+      req.body.lt_number = nextLtNumber;
+    }
     const pricingErr = assertPricingValid(rate, contract_amount);
     if (pricingErr) return res.status(400).json({ error: pricingErr });
-    await db.prepare(`UPDATE longterm_customers SET name=?, rego_1=?, rego_2=?, phone=?, email=?, rate=?, rate_period=?, expiry_date=?, notes=?, contract_amount=?, payment_status=? WHERE id = ?`)
-      .run(
-        name, rego_1, rego_2, phone, email, rate || 0, rate_period || 'monthly', expiry_date || null, notes,
-        contract_amount != null && contract_amount !== '' ? parseFloat(contract_amount) : null,
-        payment_status || 'Unpaid',
-        req.params.id
-      );
+
+    await db.prepare(`
+      UPDATE longterm_customers
+      SET
+        lt_number = COALESCE(?, lt_number),
+        name=?, rego_1=?, rego_2=?, phone=?, email=?,
+        rate=?, rate_period=?, expiry_date=?, notes=?,
+        contract_amount=?, payment_status=?
+      WHERE id = ? AND carpark_id = ?
+    `).run(
+      req.body.lt_number,
+      name, rego_1, rego_2, phone, email,
+      rate || 0, rate_period || 'monthly', expiry_date || null, notes,
+      contract_amount != null && contract_amount !== '' ? parseFloat(contract_amount) : null,
+      payment_status || 'Unpaid',
+      ltId, carparkId
+    );
+
     const customer = await db.prepare('SELECT * FROM longterm_customers WHERE id = ?').get(req.params.id);
     res.json(customer);
   } catch (err) { res.status(500).json({ error: err.message }); }

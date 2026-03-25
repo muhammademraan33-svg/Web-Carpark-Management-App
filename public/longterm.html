@@ -65,7 +65,7 @@
           <div class="row g-3">
             <div class="col-md-3">
               <label class="form-label">LT #</label>
-              <input type="text" class="form-control fw-bold" id="lt-number" placeholder="LT1" readonly>
+              <input type="text" class="form-control fw-bold" id="lt-number" placeholder="LT1">
             </div>
             <div class="col-md-9">
               <label class="form-label">Full Name *</label>
@@ -224,6 +224,14 @@
       return Number.isFinite(n) && n > 0;
     }
 
+    function normalizeLtNumber(input) {
+      const raw = String(input || '').trim().toUpperCase();
+      if (!raw) return '';
+      const digits = raw.replace(/[^0-9]/g, '');
+      if (!digits) return '';
+      return `LT${parseInt(digits, 10)}`;
+    }
+
     function renewalBadge(c) {
       if (c.renewal_status === 'expired') {
         return `<span class="badge bg-danger ms-2">Expired ${Math.abs(c.days_to_expiry)}d</span>`;
@@ -342,9 +350,13 @@
       const suggested = parseInt(String(ltNo).replace(/[^0-9]/g, ''), 10);
       if (!Number.isNaN(suggested) && Array.from(sel.options).some(o => Number(o.value) === suggested)) {
         sel.value = String(suggested);
-        const ks = document.getElementById('lt-key-status');
-        if (ks) ks.value = 'in_yard';
+      } else {
+        // If the suggested slot is not available, auto-pick the first available slot.
+        const firstAvailable = Array.from(sel.options).find(o => o.value && o.value !== '');
+        if (firstAvailable) sel.value = String(firstAvailable.value);
       }
+      const ks = document.getElementById('lt-key-status');
+      if (ks && sel.value) ks.value = 'in_yard';
     }
 
     function openEditModal(lt) {
@@ -364,9 +376,14 @@
       if (ca) ca.value = lt.contract_amount != null && lt.contract_amount !== '' ? parseFloat(lt.contract_amount).toFixed(2) : '';
       const ps = document.getElementById('lt-payment-status');
       if (ps) ps.value = lt.payment_status || 'Unpaid';
+      // openEditModal is used for both:
+      //  - list objects from /api/longterm (fields: lt_key_slot / lt_in_yard)
+      //  - detail objects from /api/longterm/:id (fields: key_number / key_in_yard)
+      const currentKeySlot = (lt.key_number != null ? lt.key_number : lt.lt_key_slot);
+      const currentInYard = (lt.key_in_yard != null ? lt.key_in_yard : lt.lt_in_yard);
       const ks = document.getElementById('lt-key-status');
-      if (ks) ks.value = lt.key_in_yard ? 'in_yard' : 'released';
-      populateLtKeyOptions(lt.key_number || null);
+      if (ks) ks.value = Number(currentInYard) === 1 || currentInYard === true ? 'in_yard' : 'released';
+      populateLtKeyOptions(currentKeySlot || null);
       document.getElementById('btn-delete-lt').style.display = 'inline-block';
       updateLtEmailButtons();
       new bootstrap.Modal('#ltModal').show();
@@ -391,8 +408,10 @@
       document.getElementById('lt-email').value = '';
       document.getElementById('lt-rate').value = LT_DEFAULT_MONTHLY.toFixed(2);
       document.getElementById('lt-rate-period').value = 'monthly';
-      document.getElementById('lt-key-number').innerHTML = '<option value="">-- No LT key assigned --</option>';
       document.getElementById('lt-key-status').value = 'released';
+      // Populate available LT key slots for new customers.
+      // Uses lt-id=0 (not matching any existing id) so it filters out used slots correctly.
+      await populateLtKeyOptions(null);
       document.getElementById('lt-expiry').value = addMonthsYmd(localDateStr(new Date()), 3);
       applyTermMonths(3);
       document.getElementById('lt-notes').value = '';
@@ -450,8 +469,9 @@
 
     document.getElementById('btn-save-lt').addEventListener('click', async () => {
       const id = document.getElementById('lt-id').value;
+      const normalizedLt = normalizeLtNumber(document.getElementById('lt-number').value);
       const payload = {
-        lt_number: document.getElementById('lt-number').value,
+        lt_number: normalizedLt,
         name: document.getElementById('lt-name').value,
         rego_1: document.getElementById('lt-rego1').value,
         rego_2: document.getElementById('lt-rego2').value,
@@ -466,6 +486,7 @@
       };
 
       if (!payload.name) { showAlert('Name is required', 'danger'); return; }
+      if (!payload.lt_number) { showAlert('LT # is required (example: LT9)', 'danger'); return; }
       if (!isPositiveMoney(payload.rate) && !isPositiveMoney(payload.contract_amount)) {
         showAlert('Set either Monthly Rate > 0 or Contract term total > 0', 'danger');
         return;
