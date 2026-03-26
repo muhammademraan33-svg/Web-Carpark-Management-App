@@ -61,12 +61,33 @@ router.get('/lookup-rego', requireAuth, async (req, res) => {
     if (!rego) return res.json({ invoice: null, longterm: null, accountCustomer: null });
     const r = rego.trim();
     const invoice = await db.prepare(`
-      SELECT i.*, c.alert_message as customer_alert_stored
+      SELECT i.*, c.alert_message as customer_alert_stored,
+             c.first_name AS _cust_first_name,
+             c.last_name AS _cust_last_name,
+             c.phone AS _cust_phone,
+             c.email AS _cust_email
       FROM invoices i
       LEFT JOIN customers c ON i.customer_id = c.id
       WHERE i.carpark_id = ? AND UPPER(i.rego) = UPPER(?) AND i.void = 0
       ORDER BY i.created_at DESC LIMIT 1
     `).get(carparkId, r);
+
+    // Prefer current customer master record when invoice snapshot is missing fields.
+    if (invoice) {
+      const pick = (invVal, custVal) => {
+        const iv = invVal != null ? String(invVal).trim() : '';
+        const cv = custVal != null ? String(custVal).trim() : '';
+        return iv || cv || '';
+      };
+      invoice.first_name = pick(invoice.first_name, invoice._cust_first_name);
+      invoice.last_name = pick(invoice.last_name, invoice._cust_last_name);
+      invoice.phone = pick(invoice.phone, invoice._cust_phone);
+      invoice.email = pick(invoice.email, invoice._cust_email);
+      delete invoice._cust_first_name;
+      delete invoice._cust_last_name;
+      delete invoice._cust_phone;
+      delete invoice._cust_email;
+    }
 
     const longterm = await db.prepare(`
       SELECT * FROM longterm_customers
@@ -83,7 +104,7 @@ router.get('/lookup-rego', requireAuth, async (req, res) => {
       LIMIT 1
     `).get(carparkId, r, r);
 
-    const email = (invoice && invoice.email)
+    const email = (invoice && String(invoice.email || '').trim())
       ? String(invoice.email).trim()
       : (emailQuery ? String(emailQuery).trim() : '');
     if (!accountCustomer && email) {

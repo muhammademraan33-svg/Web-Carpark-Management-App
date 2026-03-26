@@ -437,6 +437,74 @@ function applyLongTermToInvoice(lt) {
 }
 
 // ─── Rego / email lookup: previous invoice + long-term + on-account detection ─
+/** Apply fields from the most recent invoice for this rego (API merges customer master when invoice snapshot is thin). */
+function applyInvoiceFromPreviousVisit(inv, options = {}) {
+  if (!inv) return;
+  const mergeOnlyMissing = !!options.mergeOnlyMissing;
+  const skipAccount = !!options.skipAccount;
+  const setField = (id, val) => {
+    if (val == null || val === '') return;
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (mergeOnlyMissing && String(el.value || '').trim() !== '') return;
+    el.value = val;
+  };
+  setField('inv-last-name', inv.last_name);
+  setField('inv-first-name', inv.first_name);
+  setField('inv-phone', inv.phone);
+  setField('inv-email', inv.email);
+  if (inv.flight_info != null && String(inv.flight_info).trim() !== '') {
+    const el = document.getElementById('inv-flight-info');
+    if (el && (!mergeOnlyMissing || !String(el.value || '').trim())) el.value = inv.flight_info;
+  }
+  if (inv.flight_type) {
+    const el = document.getElementById('inv-flight-type');
+    if (el && (!mergeOnlyMissing || !String(el.value || '').trim())) el.value = inv.flight_type;
+  }
+  if (inv.notes != null && String(inv.notes).trim() !== '') {
+    const el = document.getElementById('inv-notes');
+    if (el && (!mergeOnlyMissing || !String(el.value || '').trim())) el.value = inv.notes;
+  }
+  if (inv.customer_id) {
+    document.getElementById('inv-customer-id').value = inv.customer_id;
+  }
+  const alertText = inv.customer_alert || inv.customer_alert_stored;
+  if (alertText) setCustomerAlertText(alertText);
+  if (!skipAccount && inv.account_customer_id) {
+    document.getElementById('inv-account-customer').value = String(inv.account_customer_id);
+    const acct = accountCustomers.find(a => String(a.id) === String(inv.account_customer_id));
+    if (acct) applyAccountCustomerPricingFromLookup(acct);
+    else setOnAccountPaymentLock('On Account', true);
+  }
+}
+
+function applyAccountCustomerPricingFromLookup(acct) {
+  if (!acct) return;
+  const billing = (acct.billing_email || acct.email || '').trim();
+  if (billing) document.getElementById('inv-email').value = billing;
+  const d = acct.discount_percent || 0;
+  showAlert(`On-account customer: ${acct.company_name}${d > 0 ? ` (${d}% discount on short-term rates)` : ''}`, 'info');
+  const nights = parseInt(document.getElementById('inv-nights').value, 10) || 1;
+  fetch(`/api/invoices/calculate-price?nights=${nights}&account_customer_id=${acct.id}`)
+    .then(r => r.json())
+    .then(p => {
+      if (!p || p.error) return;
+      document.getElementById('inv-total-price').value = p.total.toFixed(2);
+      document.getElementById('inv-payment-amount').value = p.total.toFixed(2);
+      document.getElementById('price-breakdown').textContent =
+        `${nights} day(s) × $${p.dailyRate}/day = $${(p.dailyRate * nights).toFixed(2)}` +
+        (p.pricing_mode === 'account_rate_card'
+          ? ' (account rate card)'
+          : (p.discountPercent > 0 ? ` (${p.discountPercent}% account discount → $${p.total.toFixed(2)})` : ''));
+      setPricingModeLabel(p.pricing_mode === 'account_rate_card'
+        ? 'account-rate-card'
+        : (p.discountPercent > 0 ? 'account-discount' : 'manual'));
+      setLongTermPricingMode(false);
+      setOnAccountPaymentLock('On Account', true);
+    })
+    .catch(() => {});
+}
+
 async function runCustomerLookup() {
   const rego = document.getElementById('inv-rego').value.trim();
   if (currentInvoiceId) return;
@@ -454,11 +522,7 @@ async function runCustomerLookup() {
     const lt = data.longterm;
     applyLongTermToInvoice(lt);
     if (inv) {
-      const alertText = inv.customer_alert || inv.customer_alert_stored;
-      if (alertText) setCustomerAlertText(alertText);
-      if (inv.customer_id && !document.getElementById('inv-customer-id').value) {
-        document.getElementById('inv-customer-id').value = inv.customer_id;
-      }
+      applyInvoiceFromPreviousVisit(inv, { mergeOnlyMissing: true, skipAccount: true });
     }
     const rp = lt.rate_period || 'monthly';
     const selected = getLongTermInvoiceAmount(lt);
@@ -470,45 +534,13 @@ async function runCustomerLookup() {
   }
 
   if (inv) {
-    const fill = (id, val) => { if (val && !document.getElementById(id).value) document.getElementById(id).value = val; };
-    fill('inv-last-name', inv.last_name);
-    fill('inv-first-name', inv.first_name);
-    fill('inv-phone', inv.phone);
-    fill('inv-email', inv.email);
-    if (inv.customer_id && !document.getElementById('inv-customer-id').value) {
-      document.getElementById('inv-customer-id').value = inv.customer_id;
-    }
-    const alertText = inv.customer_alert || inv.customer_alert_stored;
-    if (alertText) setCustomerAlertText(alertText);
+    applyInvoiceFromPreviousVisit(inv, { mergeOnlyMissing: false, skipAccount: false });
     showAlert(`✓ Details auto-filled from previous visit (Invoice #${inv.invoice_number})`, 'info');
   }
 
-  if (data.accountCustomer) {
+  if (data.accountCustomer && !document.getElementById('inv-account-customer').value) {
     document.getElementById('inv-account-customer').value = data.accountCustomer.id;
-    const acct = data.accountCustomer;
-    const billing = (acct.billing_email || acct.email || '').trim();
-    if (billing) document.getElementById('inv-email').value = billing;
-    const d = acct.discount_percent || 0;
-    showAlert(`On-account customer: ${acct.company_name}${d > 0 ? ` (${d}% discount on short-term rates)` : ''}`, 'info');
-    const nights = parseInt(document.getElementById('inv-nights').value, 10) || 1;
-    fetch(`/api/invoices/calculate-price?nights=${nights}&account_customer_id=${acct.id}`)
-      .then(r => r.json())
-      .then(p => {
-        if (!p || p.error) return;
-        document.getElementById('inv-total-price').value = p.total.toFixed(2);
-        document.getElementById('inv-payment-amount').value = p.total.toFixed(2);
-        document.getElementById('price-breakdown').textContent =
-          `${nights} day(s) × $${p.dailyRate}/day = $${(p.dailyRate * nights).toFixed(2)}` +
-          (p.pricing_mode === 'account_rate_card'
-            ? ' (account rate card)'
-            : (p.discountPercent > 0 ? ` (${p.discountPercent}% account discount → $${p.total.toFixed(2)})` : ''));
-        setPricingModeLabel(p.pricing_mode === 'account_rate_card'
-          ? 'account-rate-card'
-          : (p.discountPercent > 0 ? 'account-discount' : 'manual'));
-        setLongTermPricingMode(false);
-        setOnAccountPaymentLock('On Account', true);
-      })
-      .catch(() => {});
+    applyAccountCustomerPricingFromLookup(data.accountCustomer);
   } else if (!data.accountCustomer && !document.getElementById('inv-account-customer').value) {
     clearOnAccountPaymentLock();
   }
