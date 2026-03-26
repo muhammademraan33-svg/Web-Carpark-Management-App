@@ -100,18 +100,6 @@
               <label class="form-label">Email</label>
               <input type="email" class="form-control" id="lt-email" placeholder="email@example.com">
             </div>
-            <div class="col-md-3">
-              <label class="form-label">Monthly Rate $</label>
-              <input type="number" step="0.01" class="form-control" id="lt-rate" placeholder="120.00">
-            </div>
-            <div class="col-md-3">
-              <label class="form-label">Rate Period</label>
-              <select class="form-select" id="lt-rate-period">
-                <option value="monthly">Monthly</option>
-                <option value="weekly">Weekly</option>
-                <option value="annual">Annual</option>
-              </select>
-            </div>
             <div class="col-md-4">
               <label class="form-label">Expiry Date</label>
               <input type="date" class="form-control" id="lt-expiry">
@@ -173,7 +161,6 @@
   <script src="/js/common.js"></script>
   <script>
     document.getElementById('navbar-container').innerHTML = renderNavbar('longterm');
-    const LT_DEFAULT_MONTHLY = 200.00;
     const LT_TERM_TOTALS = { 3: 500.00, 6: 1000.00, 12: 1650.00 };
 
     function addMonthsYmd(ymd, months) {
@@ -185,13 +172,7 @@
 
     /** Amount for a multi-month term from agreed LT schedule. */
     function termTotalAmount(months) {
-      if (LT_TERM_TOTALS[months]) return LT_TERM_TOTALS[months];
-      const rate = parseFloat(document.getElementById('lt-rate').value) || 0;
-      const period = document.getElementById('lt-rate-period').value || 'monthly';
-      if (period === 'monthly') return rate * months;
-      if (period === 'weekly') return rate * (52 / 12) * months;
-      if (period === 'annual') return (rate / 12) * months;
-      return rate * months;
+      return LT_TERM_TOTALS[months] || 0;
     }
 
     function applyTermMonths(months) {
@@ -199,10 +180,6 @@
       const total = termTotalAmount(months);
       const el = document.getElementById('lt-contract-amount');
       if (el) el.value = total > 0 ? total.toFixed(2) : '';
-      const rateEl = document.getElementById('lt-rate');
-      if (rateEl && (!rateEl.value || parseFloat(rateEl.value) <= 0)) {
-        rateEl.value = LT_DEFAULT_MONTHLY.toFixed(2);
-      }
     }
 
     function updateLtEmailButtons() {
@@ -217,11 +194,6 @@
       if (br) { br.disabled = dis; br.title = dis ? (id ? 'Add an email address above' : 'Save the customer first') : 'Send paid / receipt confirmation'; }
       if (pp) { pp.disabled = !id; pp.title = id ? 'Preview payment request template' : 'Save the customer first'; }
       if (pr) { pr.disabled = !id; pr.title = id ? 'Preview paid/receipt template' : 'Save the customer first'; }
-    }
-
-    function isPositiveMoney(value) {
-      const n = parseFloat(value);
-      return Number.isFinite(n) && n > 0;
     }
 
     function normalizeLtNumber(input) {
@@ -327,20 +299,25 @@
       if (!sel) return;
       sel.innerHTML = '<option value="">-- No LT key assigned --</option>';
       const meId = parseInt(document.getElementById('lt-id').value || '0', 10);
-      const res = await fetch('/api/longterm');
-      if (!res.ok) return;
-      const data = await res.json();
+      const [ltRes, slotRes] = await Promise.all([
+        fetch('/api/longterm'),
+        fetch('/api/keybox/lt-slots')
+      ]);
+      if (!ltRes.ok || !slotRes.ok) return;
+      const data = await ltRes.json();
+      const slots = await slotRes.json();
       const current = currentKey != null && currentKey !== '' ? Number(currentKey) : null;
       const used = new Set((data || [])
         .filter(c => c.id !== meId && c.lt_key_slot != null)
         .map(c => Number(c.lt_key_slot)));
-      for (let i = 1; i <= 60; i += 1) {
-        if (used.has(i) && i !== current) continue;
+      const slotNumbers = (slots || []).map(s => Number(s.key_number)).filter(n => Number.isFinite(n) && n > 0);
+      slotNumbers.forEach((i) => {
+        if (used.has(i) && i !== current) return;
         const opt = document.createElement('option');
         opt.value = i;
         opt.textContent = `LT${i}`;
         sel.appendChild(opt);
-      }
+      });
       if (current != null) {
         sel.value = String(current);
         return;
@@ -368,8 +345,6 @@
       document.getElementById('lt-rego2').value = lt.rego_2 || '';
       document.getElementById('lt-phone').value = lt.phone || '';
       document.getElementById('lt-email').value = lt.email || '';
-      document.getElementById('lt-rate').value = lt.rate || '';
-      document.getElementById('lt-rate-period').value = lt.rate_period || 'monthly';
       document.getElementById('lt-expiry').value = lt.expiry_date ? lt.expiry_date.split('T')[0] : '';
       document.getElementById('lt-notes').value = lt.notes || '';
       const ca = document.getElementById('lt-contract-amount');
@@ -406,8 +381,6 @@
       document.getElementById('lt-rego2').value = '';
       document.getElementById('lt-phone').value = '';
       document.getElementById('lt-email').value = '';
-      document.getElementById('lt-rate').value = LT_DEFAULT_MONTHLY.toFixed(2);
-      document.getElementById('lt-rate-period').value = 'monthly';
       document.getElementById('lt-key-status').value = 'released';
       // Populate available LT key slots for new customers.
       // Uses lt-id=0 (not matching any existing id) so it filters out used slots correctly.
@@ -477,8 +450,6 @@
         rego_2: document.getElementById('lt-rego2').value,
         phone: document.getElementById('lt-phone').value,
         email: document.getElementById('lt-email').value,
-        rate: document.getElementById('lt-rate').value,
-        rate_period: document.getElementById('lt-rate-period').value,
         expiry_date: document.getElementById('lt-expiry').value || null,
         notes: document.getElementById('lt-notes').value,
         contract_amount: document.getElementById('lt-contract-amount').value || null,
@@ -487,10 +458,6 @@
 
       if (!payload.name) { showAlert('Name is required', 'danger'); return; }
       if (!payload.lt_number) { showAlert('LT # is required (example: LT9)', 'danger'); return; }
-      if (!isPositiveMoney(payload.rate) && !isPositiveMoney(payload.contract_amount)) {
-        showAlert('Set either Monthly Rate > 0 or Contract term total > 0', 'danger');
-        return;
-      }
 
       let res;
       if (id) {
@@ -553,6 +520,11 @@
     async function init() {
       await checkAuth();
       await loadLongTerm();
+      const params = new URLSearchParams(window.location.search);
+      const ltId = params.get('lt_id');
+      if (ltId) {
+        await openEditById(ltId);
+      }
       updateNavCarsCount();
     }
     init();

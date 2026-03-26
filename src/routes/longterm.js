@@ -10,15 +10,6 @@ function normalizedMoney(val) {
   return Number.isFinite(n) ? n : null;
 }
 
-function assertPricingValid(rate, contractAmount) {
-  const r = normalizedMoney(rate) || 0;
-  const c = normalizedMoney(contractAmount) || 0;
-  if (r <= 0 && c <= 0) {
-    return 'Set either Monthly Rate > 0 or Contract term total > 0';
-  }
-  return null;
-}
-
 function ymdToday() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -138,8 +129,6 @@ router.post('/', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
     const { lt_number, name, rego_1, rego_2, phone, email, rate, rate_period, expiry_date, notes, contract_amount, payment_status } = req.body;
-    const pricingErr = assertPricingValid(rate, contract_amount);
-    if (pricingErr) return res.status(400).json({ error: pricingErr });
     const existing = await db.prepare('SELECT id, active FROM longterm_customers WHERE lt_number = ? AND carpark_id = ?').get(lt_number, carparkId);
 
     // If the LT exists but is inactive, reuse the same LT# by reactivating it.
@@ -154,7 +143,7 @@ router.post('/', requireAuth, async (req, res) => {
         WHERE id = ?
       `).run(
         name, rego_1, rego_2, phone, email,
-        rate || 0, rate_period || 'monthly', expiry_date || null, notes,
+        normalizedMoney(rate) || 0, rate_period || 'monthly', expiry_date || null, notes,
         contract_amount != null && contract_amount !== '' ? parseFloat(contract_amount) : null,
         payment_status || 'Unpaid',
         existing.id
@@ -169,7 +158,7 @@ router.post('/', requireAuth, async (req, res) => {
         (lt_number, name, rego_1, rego_2, phone, email, rate, rate_period, expiry_date, notes, carpark_id, contract_amount, payment_status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      lt_number, name, rego_1, rego_2, phone, email, rate || 0, rate_period || 'monthly', expiry_date || null, notes, carparkId,
+      lt_number, name, rego_1, rego_2, phone, email, normalizedMoney(rate) || 0, rate_period || 'monthly', expiry_date || null, notes, carparkId,
       contract_amount != null && contract_amount !== '' ? parseFloat(contract_amount) : null,
       payment_status || 'Unpaid'
     );
@@ -218,21 +207,18 @@ router.put('/:id', requireAuth, async (req, res) => {
       // Use normalized value for the update.
       req.body.lt_number = nextLtNumber;
     }
-    const pricingErr = assertPricingValid(rate, contract_amount);
-    if (pricingErr) return res.status(400).json({ error: pricingErr });
-
     await db.prepare(`
       UPDATE longterm_customers
       SET
         lt_number = COALESCE(?, lt_number),
         name=?, rego_1=?, rego_2=?, phone=?, email=?,
-        rate=?, rate_period=?, expiry_date=?, notes=?,
+        rate=COALESCE(?, rate), rate_period=COALESCE(?, rate_period), expiry_date=?, notes=?,
         contract_amount=?, payment_status=?
       WHERE id = ? AND carpark_id = ?
     `).run(
       req.body.lt_number,
       name, rego_1, rego_2, phone, email,
-      rate || 0, rate_period || 'monthly', expiry_date || null, notes,
+      normalizedMoney(rate), rate_period || null, expiry_date || null, notes,
       contract_amount != null && contract_amount !== '' ? parseFloat(contract_amount) : null,
       payment_status || 'Unpaid',
       ltId, carparkId

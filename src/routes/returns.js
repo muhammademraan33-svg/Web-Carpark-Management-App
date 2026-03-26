@@ -15,14 +15,30 @@ router.get('/', requireAuth, async (req, res) => {
     if (filter === 'date_brought_in') dateField = 'date_in';
     else if (filter === 'date_paid')   dateField = 'updated_at';
 
+    const inYardExpr = `(i.picked_up IS NULL OR i.picked_up = '' OR i.picked_up = 'Car In Yard')`;
+
     let query = `
       SELECT i.*, u.name as staff_name, ac.company_name as account_name
       FROM invoices i
       LEFT JOIN users u ON i.staff_id = u.id
       LEFT JOIN account_customers ac ON i.account_customer_id = ac.id
-      WHERE i.carpark_id = ? AND DATE(i.${dateField}) = ?
+      WHERE i.carpark_id = ?
     `;
-    const params = [carparkId, filterDate];
+    const params = [carparkId];
+
+    // Return Date view includes:
+    // - cars returning on selected day, plus
+    // - overdue cars (past return date) that are still in yard.
+    if (dateField === 'return_date') {
+      query += ` AND (
+        DATE(i.return_date) = ?
+        OR (DATE(i.return_date) < ? AND ${inYardExpr})
+      )`;
+      params.push(filterDate, filterDate);
+    } else {
+      query += ` AND DATE(i.${dateField}) = ?`;
+      params.push(filterDate);
+    }
 
     if (show_voided !== 'true') query += ' AND i.void = 0';
 

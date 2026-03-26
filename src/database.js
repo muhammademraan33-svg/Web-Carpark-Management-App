@@ -320,6 +320,14 @@ async function initializeDatabase() {
   // LT locker is now separate from Standard key_box; free any legacy LT-held standard rows.
   try { x(`UPDATE key_box SET status='available', invoice_id=NULL, longterm_customer_id=NULL, holder_type='available' WHERE holder_type='longterm' OR longterm_customer_id IS NOT NULL`); } catch (_) {}
 
+  x(`CREATE TABLE IF NOT EXISTS lt_key_slots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    carpark_id INTEGER DEFAULT 1,
+    key_number INTEGER NOT NULL,
+    active INTEGER DEFAULT 1,
+    UNIQUE(carpark_id, key_number)
+  )`);
+
   x(`CREATE TABLE IF NOT EXISTS petty_cash (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     carpark_id INTEGER DEFAULT 1,
@@ -424,6 +432,21 @@ async function initializeDatabase() {
     const ik = db.prepare('INSERT OR IGNORE INTO key_box (carpark_id, key_number, status) VALUES (?, ?, ?)');
     for (let i = 1; i <= 60; i++) await ik.run(1, i, 'available');
   }
+
+  // LT locker slots (seed 60 slots, then ensure any assigned LT slots also exist)
+  const ltSlotRow = await db.prepare('SELECT id FROM lt_key_slots WHERE carpark_id = 1').get();
+  if (!ltSlotRow) {
+    const ils = db.prepare('INSERT OR IGNORE INTO lt_key_slots (carpark_id, key_number, active) VALUES (?, ?, 1)');
+    for (let i = 1; i <= 60; i++) await ils.run(1, i);
+  }
+  try {
+    await db.prepare(`
+      INSERT OR IGNORE INTO lt_key_slots (carpark_id, key_number, active)
+      SELECT carpark_id, lt_key_slot, 1
+      FROM longterm_customers
+      WHERE lt_key_slot IS NOT NULL AND lt_key_slot > 0
+    `).run();
+  } catch (_) {}
 
   // Account customers
   const acctRow = await db.prepare('SELECT id FROM account_customers WHERE carpark_id = 1').get();

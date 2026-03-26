@@ -173,14 +173,14 @@
           </div>`;
       }
 
-      // Overdue/Unknown
+      // Overdue/Unknown (still in yard)
       const overdueFiltered = filterCarsByReturnTime(data.overdue || []);
       if (overdueFiltered.length > 0) {
         totalShown += overdueFiltered.length;
         html += `
           <div class="mb-3">
             <div class="returns-overdue-header d-flex justify-content-between">
-              <span>Unknown/Overdue</span>
+              <span>Overdue / Unknown (Not Picked Up)</span>
               <span>Total Cars: ${overdueFiltered.length}</span>
             </div>
             ${renderCarsTable(overdueFiltered)}
