@@ -9,6 +9,7 @@ const router = express.Router();
 const SMTP_USER_DEFAULT = 'boicarparkkerikeri@gmail.com';
 const SMTP_PASS_DEFAULT = 'tney tgfn erxi mkny';
 const SMTP_FROM_DEFAULT = `BOI Car Storage <${SMTP_USER_DEFAULT}>`;
+const LONGTERM_MONTHLY_DEFAULT = 200.00;
 
 function getTransporter() {
   return nodemailer.createTransport({
@@ -31,13 +32,22 @@ function emailFrom() {
 
 function longTermGstAmounts(lt) {
   const GST_RATE = 0.15;
-  const base = parseFloat(lt.contract_amount != null && lt.contract_amount !== '' ? lt.contract_amount : lt.rate || 0) || 0;
+  const baseRaw = lt.contract_amount != null && lt.contract_amount !== '' ? lt.contract_amount : (lt.rate || LONGTERM_MONTHLY_DEFAULT);
+  const base = parseFloat(baseRaw) || LONGTERM_MONTHLY_DEFAULT;
   const gst = Math.round((base * GST_RATE) * 100) / 100;
   const total = Math.round((base + gst) * 100) / 100;
   return { base, gst, total, rate: GST_RATE };
 }
 
-function buildAccountEmailHTML(carpark, account, invoices, total, monthName, year) {
+function dueDate20thNextMonth(month, year) {
+  const m = parseInt(month, 10);
+  const y = parseInt(year, 10);
+  const nextMonth = m === 12 ? 1 : m + 1;
+  const nextYear = m === 12 ? y + 1 : y;
+  return `${nextYear}-${String(nextMonth).padStart(2, '0')}-20`;
+}
+
+function buildAccountEmailHTML(carpark, account, invoices, total, monthName, year, dueDateYmd) {
   const rows = invoices.map(inv => {
     const dIn  = inv.date_in     ? new Date(inv.date_in).toLocaleDateString('en-NZ',     { day: 'numeric', month: 'short', year: '2-digit' }) : '';
     const dOut = inv.return_date ? new Date(inv.return_date).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short', year: '2-digit' }) : '';
@@ -68,6 +78,7 @@ function buildAccountEmailHTML(carpark, account, invoices, total, monthName, yea
       <tbody>${rows}</tbody>
     </table>
     <p style="margin-top:10px;"><strong>Total: <span style="color:#27ae60;">$${parseFloat(total).toFixed(2)}</span></strong></p>
+    <p style="margin-top:4px;"><strong>Payment due date:</strong> 20th of next month (${dueDateYmd})</p>
     ${payLink}
     <hr style="margin-top:30px;">
     <p style="color:#7f8c8d;font-size:12px;">${carpark.name}<br>${carpark.address || ''}<br>${carpark.phone || ''}<br>
@@ -96,6 +107,7 @@ router.get('/preview', requireAuth, async (req, res) => {
     const endDate   = new Date(y, parseInt(m), 0).toISOString().split('T')[0];
     const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
     const monthName  = monthNames[parseInt(m) - 1];
+    const dueDateYmd = dueDate20thNextMonth(parseInt(m, 10), parseInt(y, 10));
     const carpark    = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(carparkId);
     const accounts   = await db.prepare('SELECT * FROM account_customers WHERE carpark_id = ? AND active = 1').all(carparkId);
 
@@ -134,7 +146,7 @@ router.get('/preview', requireAuth, async (req, res) => {
       return { account: g.account, account_ids: g.account_ids, invoices: g.invoices, total: g.total };
     });
 
-    res.json({ month: m, year: y, monthName, carpark, accounts: accountData });
+    res.json({ month: m, year: y, monthName, dueDate: dueDateYmd, carpark, accounts: accountData });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -149,6 +161,7 @@ router.post('/send-accounts', requireAuth, async (req, res) => {
     const endDate   = new Date(y, parseInt(m), 0).toISOString().split('T')[0];
     const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
     const monthName  = monthNames[parseInt(m) - 1];
+    const dueDateYmd = dueDate20thNextMonth(parseInt(m, 10), parseInt(y, 10));
     const carpark    = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(carparkId);
 
     let accounts;
@@ -201,7 +214,7 @@ router.post('/send-accounts', requireAuth, async (req, res) => {
         continue;
       }
 
-      const html = buildAccountEmailHTML(carpark, g.account, invoices, total, monthName, y);
+      const html = buildAccountEmailHTML(carpark, g.account, invoices, total, monthName, y, dueDateYmd);
       try {
         await transporter.sendMail({
           from: emailFrom(),
@@ -228,6 +241,31 @@ router.get('/logs', requireAuth, async (req, res) => {
     const logs = await db.prepare('SELECT * FROM email_logs WHERE carpark_id = ? ORDER BY sent_at DESC LIMIT 100').all(req.session.carparkId || 1);
     res.json(logs);
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/email/logs/:id
+router.delete('/logs/:id', requireAuth, async (req, res) => {
+  try {
+    const carparkId = req.session.carparkId || 1;
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'Invalid log id' });
+    const result = await db.prepare('DELETE FROM email_logs WHERE id = ? AND carpark_id = ?').run(id, carparkId);
+    if (!result || !result.changes) return res.status(404).json({ error: 'Log not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/email/logs
+router.delete('/logs', requireAuth, async (req, res) => {
+  try {
+    const carparkId = req.session.carparkId || 1;
+    const result = await db.prepare('DELETE FROM email_logs WHERE carpark_id = ?').run(carparkId);
+    res.json({ success: true, deleted: result && Number.isFinite(result.changes) ? result.changes : 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/email/receipt/:invoiceId  – send an individual invoice receipt
@@ -346,11 +384,15 @@ function longTermEmailHTML(carpark, lt, kind) {
   ].join('');
 
   if (kind === 'payment') {
+    const now = new Date();
+    const dueDateYmd = dueDate20thNextMonth(now.getMonth() + 1, now.getFullYear());
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
 <body style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;padding:20px;color:#333;">
   <h2 style="color:#2c3e50;">${carpark.name} – Long-term payment due</h2>
   <p>Hi ${lt.name},</p>
   <p>Please arrange payment for your long-term storage contract <strong>${lt.lt_number}</strong>.</p>
+  <p><strong>Monthly plan:</strong> $${LONGTERM_MONTHLY_DEFAULT.toFixed(2)} ex GST (GST added below).</p>
+  <p><strong>Payment due date:</strong> 20th of next month (${dueDateYmd}).</p>
   <table style="width:100%;border-collapse:collapse;margin:16px 0;background:#f8f9fa;border-radius:8px;">
     <tr><td style="padding:12px;"><strong>Amount due</strong></td><td style="padding:12px;text-align:right;font-size:18px;color:#c0392b;">${currency(gst.total)}</td></tr>
     <tr><td style="padding:12px;border-top:1px solid #dee2e6;">Amount ex GST</td><td style="padding:12px;border-top:1px solid #dee2e6;text-align:right;">${currency(gst.base)}</td></tr>

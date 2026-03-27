@@ -118,18 +118,28 @@ app.get('/', (req, res) => {
   res.redirect('/login.html');
 });
 
-// ─── Scheduled job: send account emails on the 20th of each month at 8 AM ───
-cron.schedule('0 8 20 * *', async () => {
-  console.log('Running scheduled monthly account email job...');
+async function runMonthEndEmailJob({ force = false } = {}) {
+  console.log(`Running month-end account/LT email job${force ? ' (manual force)' : ''}...`);
   try {
     const nodemailer = require('nodemailer');
 
     const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
+    const isLastDayOfMonth = tomorrow.getMonth() !== now.getMonth();
+    if (!force && !isLastDayOfMonth) {
+      console.log('Month-end email job skipped: not last day of month.');
+      return { skipped: true, reason: 'not_last_day' };
+    }
+
     const month = now.getMonth() + 1;
     const year  = now.getFullYear();
     const m     = String(month).padStart(2, '0');
     const startDate = `${year}-${m}-01`;
     const endDate   = new Date(year, month, 0).toISOString().split('T')[0];
+    const nextMonth = month === 12 ? 1 : month + 1;
+    const nextYear = month === 12 ? year + 1 : year;
+    const dueDateYmd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-20`;
     const monthNames = ['January','February','March','April','May','June',
                         'July','August','September','October','November','December'];
     const monthName = monthNames[month - 1];
@@ -179,6 +189,7 @@ cron.schedule('0 8 20 * *', async () => {
             <tr><th>Stay</th><th>Name</th><th>Car Rego</th><th>Cost</th></tr>${rows}
           </table>
           <p><strong>Total: <span style="color:#27ae60;">$${parseFloat(total).toFixed(2)}</span></strong></p>
+          <p><strong>Payment due date:</strong> 20th of next month (${dueDateYmd})</p>
           ${paymentLink}
         </body></html>`;
 
@@ -202,10 +213,64 @@ cron.schedule('0 8 20 * *', async () => {
             .run(carpark.id, account.id, account.company_name, month, year, 'failed', err.message, emailTo);
         }
       }
+
+      // Monthly Long-term payment requests (default monthly plan: $200 ex GST)
+      const ltCustomers = await db.prepare('SELECT * FROM longterm_customers WHERE carpark_id = ? AND active = 1').all(carpark.id);
+      for (const lt of ltCustomers) {
+        const emailTo = String(lt.email || '').trim();
+        if (!emailTo) continue;
+        const baseExGst = 200.00;
+        const gstAmt = Math.round((baseExGst * 0.15) * 100) / 100;
+        const total = Math.round((baseExGst + gstAmt) * 100) / 100;
+        const html = `<!DOCTYPE html><html><body style="font-family:Arial;max-width:700px;margin:0 auto;padding:20px;">
+          <h2 style="color:#2c3e50;font-style:italic;">${carpark.name} - Long-term Monthly Payment</h2><hr>
+          <p>Hi ${lt.name || ''},</p>
+          <p>This is your monthly long-term storage statement for <strong>${monthName} ${year}</strong>.</p>
+          <table border="1" cellpadding="8" cellspacing="0" width="100%">
+            <tr><th>Plan</th><th>Amount ex GST</th><th>GST (15%)</th><th>Total</th></tr>
+            <tr><td>Monthly</td><td>$${baseExGst.toFixed(2)}</td><td>$${gstAmt.toFixed(2)}</td><td><strong>$${total.toFixed(2)}</strong></td></tr>
+          </table>
+          <p><strong>Payment due date:</strong> 20th of next month (${dueDateYmd})</p>
+          <p style="color:#666;">Reference: ${lt.lt_number || ''}</p>
+        </body></html>`;
+        try {
+          await transporter.sendMail({
+            from: process.env.EMAIL_FROM || `BOI Car Storage <boicarparkkerikeri@gmail.com>`,
+            to: emailTo,
+            subject: `${carpark.name} - Long-term Monthly Statement (${monthName} ${year})`,
+            html
+          });
+        } catch (err) {
+          console.error(`Failed LT monthly send to ${emailTo}:`, err.message);
+        }
+      }
     }
-    console.log('Monthly account emails completed.');
+    console.log('Month-end account/LT emails completed.');
+    return { success: true };
   } catch (err) {
     console.error('Cron job error:', err);
+    throw err;
+  }
+}
+
+// ─── Scheduled job: send month-end account/LT emails at 8 AM ──────────────────
+// Runs on days 28-31, but only executes on the last calendar day of the month.
+cron.schedule('0 8 28-31 * *', async () => {
+  try {
+    await runMonthEndEmailJob({ force: false });
+  } catch (_) {
+    // already logged in runMonthEndEmailJob
+  }
+});
+
+// ─── Admin: manually trigger month-end email run now ───────────────────────────
+app.post('/api/admin/run-month-end-emails', async (req, res) => {
+  if (!req.session || req.session.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  try {
+    const result = await runMonthEndEmailJob({ force: true });
+    res.json({ success: true, ...result });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Failed to run month-end emails' });
   }
 });
 

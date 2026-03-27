@@ -5,6 +5,18 @@ const { releaseKey, syncKeyBoxForPickedUp } = require('../utils/keyBoxSync');
 const PDFDocument = require('pdfkit');
 const router = express.Router();
 
+function deriveStayNights24h(dateIn, returnDate, fallback = 0) {
+  const f = parseInt(fallback, 10);
+  if (!dateIn || !returnDate) return Number.isFinite(f) ? f : 0;
+  const [y1, m1, d1] = String(dateIn).slice(0, 10).split('-').map(Number);
+  const [y2, m2, d2] = String(returnDate).slice(0, 10).split('-').map(Number);
+  if (![y1, m1, d1, y2, m2, d2].every(Number.isFinite)) return Number.isFinite(f) ? f : 0;
+  const t1 = Date.UTC(y1, m1 - 1, d1);
+  const t2 = Date.UTC(y2, m2 - 1, d2);
+  const diffDays = Math.round((t2 - t1) / (1000 * 60 * 60 * 24));
+  return diffDays <= 0 ? 1 : diffDays;
+}
+
 // GET /api/invoices/calculate-price  – MUST be before /:id
 router.get('/calculate-price', requireAuth, async (req, res) => {
   try {
@@ -196,6 +208,7 @@ router.post('/', requireAuth, async (req, res) => {
     if (existing) return res.status(400).json({ error: 'Invoice number already exists' });
 
     const finalPickedUp = picked_up || 'Car In Yard';
+    const computedStayNights = deriveStayNights24h(date_in, return_date, stay_nights);
 
     const result = await db.prepare(`
       INSERT INTO invoices (
@@ -209,7 +222,7 @@ router.post('/', requireAuth, async (req, res) => {
     `).run(
       invoice_number, carparkId, customer_id || null, account_customer_id || null, key_number || null, no_key ? 1 : 0,
       rego, first_name, last_name, phone, email,
-      date_in, time_in, return_date, return_time, stay_nights || 0,
+      date_in, time_in, return_date, return_time, computedStayNights,
       flight_info, flight_type || 'Standard - On Flight', total_price || 0, credit_applied || 0, discount_percent || 0,
       paid_status || 'To Pay', payment_amount || 0, payment_method,
       paid_status_2 || null, payment_amount_2 || 0, payment_method_2 || null,
@@ -248,6 +261,7 @@ router.put('/:id', requireAuth, async (req, res) => {
     }
 
     const finalPickedUp = picked_up || 'Car In Yard';
+    const computedStayNights = deriveStayNights24h(date_in, return_date, stay_nights);
 
     await db.prepare(`
       UPDATE invoices SET
@@ -262,7 +276,7 @@ router.put('/:id', requireAuth, async (req, res) => {
     `).run(
       key_number || null, no_key ? 1 : 0, rego, first_name, last_name,
       phone, email, date_in, time_in, return_date, return_time,
-      stay_nights || 0, flight_info, flight_type || 'Standard - On Flight', total_price || 0,
+      computedStayNights, flight_info, flight_type || 'Standard - On Flight', total_price || 0,
       credit_applied || 0, discount_percent || 0, paid_status || 'To Pay', payment_amount || 0,
       payment_method, paid_status_2 || null, payment_amount_2 || 0, payment_method_2 || null,
       do_not_move ? 1 : 0, finalPickedUp, staff_id || req.session.userId, notes, customer_alert,

@@ -824,7 +824,12 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
     time_in: document.getElementById('inv-time-in').value,
     return_date: document.getElementById('inv-return-time-tbc').checked ? null : document.getElementById('inv-return-date').value,
     return_time: document.getElementById('inv-return-time-tbc').checked ? null : document.getElementById('inv-return-time').value,
-    stay_nights: document.getElementById('inv-nights').value,
+    stay_nights: (() => {
+      const dateIn = document.getElementById('inv-date-in').value;
+      const returnDate = document.getElementById('inv-return-time-tbc').checked ? null : document.getElementById('inv-return-date').value;
+      if (dateIn && returnDate) return calcNights(dateIn, returnDate);
+      return parseInt(document.getElementById('inv-nights').value, 10) || 0;
+    })(),
     flight_info: document.getElementById('inv-flight-info').value,
     flight_type: document.getElementById('inv-flight-type').value,
     total_price: document.getElementById('inv-total-price').value,
