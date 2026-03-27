@@ -23,26 +23,30 @@
       Checking renewal dates...
     </div>
 
-    <!-- Column headers -->
+    <!-- Column headers (same 8-column grid as .lt-card: renewal + payment match badges) -->
     <div class="row g-2 mb-2 px-1">
-      <div class="col-6">
-        <div class="d-flex gap-2 small fw-bold text-muted px-2">
-          <div style="min-width:50px;">LT#</div>
-          <div style="flex:1;">Name</div>
-          <div style="min-width:80px;">Rego 1</div>
-          <div style="min-width:80px;">Rego 2</div>
-          <div style="min-width:110px;">Phone</div>
-          <div style="min-width:60px;">Edit</div>
+      <div class="col-12 col-md-6">
+        <div class="lt-card-header-row">
+          <div class="lt-h">LT#</div>
+          <div class="lt-h">Name</div>
+          <div class="lt-h">Renewal</div>
+          <div class="lt-h">Pay</div>
+          <div class="lt-h">Rego 1</div>
+          <div class="lt-h">Rego 2</div>
+          <div class="lt-h">Phone</div>
+          <div class="lt-h">Edit</div>
         </div>
       </div>
-      <div class="col-6">
-        <div class="d-flex gap-2 small fw-bold text-muted px-2">
-          <div style="min-width:50px;">LT#</div>
-          <div style="flex:1;">Name</div>
-          <div style="min-width:80px;">Rego 1</div>
-          <div style="min-width:80px;">Rego 2</div>
-          <div style="min-width:110px;">Phone</div>
-          <div style="min-width:60px;">Edit</div>
+      <div class="col-12 col-md-6">
+        <div class="lt-card-header-row">
+          <div class="lt-h">LT#</div>
+          <div class="lt-h">Name</div>
+          <div class="lt-h">Renewal</div>
+          <div class="lt-h">Pay</div>
+          <div class="lt-h">Rego 1</div>
+          <div class="lt-h">Rego 2</div>
+          <div class="lt-h">Phone</div>
+          <div class="lt-h">Edit</div>
         </div>
       </div>
     </div>
@@ -213,15 +217,25 @@
 
     function renewalBadge(c) {
       if (c.renewal_status === 'expired') {
-        return `<span class="badge bg-danger ms-2">Expired ${Math.abs(c.days_to_expiry)}d</span>`;
+        return `<span class="badge bg-danger">Expired ${Math.abs(c.days_to_expiry)}d</span>`;
       }
       if (c.renewal_status === 'due_soon') {
-        return `<span class="badge bg-warning text-dark ms-2">Due in ${c.days_to_expiry}d</span>`;
+        return `<span class="badge bg-warning text-dark">Due in ${c.days_to_expiry}d</span>`;
       }
       if (c.renewal_status === 'active') {
-        return `<span class="badge bg-success-subtle text-success-emphasis ms-2">Active (${c.days_to_expiry}d)</span>`;
+        return `<span class="badge bg-success-subtle text-success-emphasis">Active (${c.days_to_expiry}d)</span>`;
       }
-      return `<span class="badge bg-secondary-subtle text-secondary-emphasis ms-2">No expiry</span>`;
+      return `<span class="badge bg-secondary-subtle text-secondary-emphasis">No expiry</span>`;
+    }
+
+    function paymentBadgeHtml(c) {
+      if (c.payment_status === 'Paid') return '<span class="badge bg-success">Paid</span>';
+      if (c.payment_status === 'Partial') return '<span class="badge bg-info text-dark">Partial</span>';
+      return '<span class="badge bg-light text-dark border">Unpaid</span>';
+    }
+
+    function escapeAttr(s) {
+      return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
     }
 
     function renderRenewalSummary(customers) {
@@ -263,12 +277,12 @@
         return items.map(c => `
           <div class="lt-card mb-2">
             <div class="lt-number">${c.lt_number}</div>
-            <div class="lt-name" style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${c.name}">${c.name}</div>
-            ${renewalBadge(c)}
-            ${c.payment_status === 'Paid' ? '<span class="badge bg-success ms-1">Paid</span>' : c.payment_status === 'Partial' ? '<span class="badge bg-info text-dark ms-1">Partial</span>' : '<span class="badge bg-light text-dark border ms-1">Unpaid</span>'}
+            <div class="lt-name" title="${escapeAttr(c.name)}">${c.name}</div>
+            <div class="lt-cell-renewal">${renewalBadge(c)}</div>
+            <div class="lt-cell-payment">${paymentBadgeHtml(c)}</div>
             ${c.rego_1 ? `<span class="lt-rego">${c.rego_1}</span>` : '<span class="lt-rego text-muted">—</span>'}
             ${c.rego_2 ? `<span class="lt-rego">${c.rego_2}</span>` : '<span class="lt-rego text-muted" style="opacity:0.3;">—</span>'}
-            <div class="small text-muted" style="min-width:90px;">${c.phone||''}</div>
+            <div class="lt-phone-cell">${c.phone || ''}</div>
             <button class="btn btn-warning btn-action btn-edit-lt" data-id="${c.id}" 
               data-lt='${JSON.stringify(c).replace(/'/g, "&#39;")}'>
               Edit

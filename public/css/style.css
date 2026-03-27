@@ -319,10 +319,44 @@ body {
 }
 
 /* === Long Term Grid === */
+/* Shared 8-column template: LT#, Name, Renewal, Payment, Rego1, Rego2, Phone, Edit */
+.lt-card-header-row,
+.lt-card {
+  display: grid;
+  grid-template-columns:
+    48px
+    minmax(0, 1.1fr)
+    minmax(96px, auto)
+    minmax(76px, auto)
+    82px
+    82px
+    minmax(88px, 1fr)
+    auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.lt-card-header-row {
+  padding: 0 8px;
+}
+
+.lt-card-header-row .lt-h {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #6c757d;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+}
+
 .lt-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 15px;
+}
+
+.lt-grid > div {
+  min-width: 0;
 }
 
 @media (max-width: 768px) {
@@ -333,23 +367,31 @@ body {
   background: #fadbd8;
   border-radius: 8px;
   padding: 12px 15px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
   border-left: 4px solid #e74c3c;
+}
+
+.lt-cell-renewal,
+.lt-cell-payment {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
 }
 
 .lt-number {
   font-weight: 700;
   color: var(--primary);
   font-size: 0.9rem;
-  min-width: 40px;
 }
 
 .lt-name {
   font-weight: 600;
-  flex: 1;
   font-size: 0.95rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lt-rego {
@@ -359,6 +401,16 @@ body {
   padding: 2px 8px;
   border-radius: 4px;
   font-weight: 600;
+  justify-self: start;
+}
+
+.lt-phone-cell {
+  font-size: 0.85rem;
+  color: #5d6d7e;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* === Returns page === */
