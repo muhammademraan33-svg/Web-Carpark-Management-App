@@ -1,8 +1,16 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { db } = require('../database');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const router = express.Router();
+
+const JWT_SECRET = () => process.env.SESSION_SECRET || 'carpark_secret_2026';
+const COOKIE_OPTS = {
+  httpOnly: true,
+  sameSite: 'lax',
+  maxAge: 8 * 60 * 60 * 1000,
+};
 
 router.get('/users', requireAuth, requireAdmin, async (req, res) => {
   try {
@@ -110,15 +118,63 @@ router.get('/staff-list', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.post('/change-password', requireAuth, async (req, res) => {
+// PUT /api/admin/me — change own username and/or password (current password required)
+router.put('/me', requireAuth, async (req, res) => {
   try {
-    const { current_password, new_password } = req.body;
+    const { current_password, new_username, new_password, new_password_confirm } = req.body;
     const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
-    if (!bcrypt.compareSync(current_password, user.password)) return res.status(400).json({ error: 'Current password is incorrect' });
-    const hash = bcrypt.hashSync(new_password, 10);
-    await db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hash, req.session.userId);
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!current_password || !bcrypt.compareSync(current_password, user.password)) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+
+    const nuRaw = new_username != null ? String(new_username).trim() : '';
+    const pwRaw = new_password != null ? String(new_password) : '';
+
+    if (!nuRaw && !pwRaw) {
+      return res.status(400).json({ error: 'Enter a new username and/or new password' });
+    }
+
+    let nextUsername = user.username;
+    let nextHash = user.password;
+
+    if (nuRaw) {
+      if (nuRaw.length < 2) return res.status(400).json({ error: 'Username must be at least 2 characters' });
+      const taken = await db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(nuRaw, user.id);
+      if (taken) return res.status(400).json({ error: 'Username already taken' });
+      nextUsername = nuRaw;
+    }
+
+    if (pwRaw) {
+      if (pwRaw.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
+      if (pwRaw !== String(new_password_confirm || '')) {
+        return res.status(400).json({ error: 'New passwords do not match' });
+      }
+      nextHash = bcrypt.hashSync(pwRaw, 10);
+    }
+
+    await db.prepare('UPDATE users SET username = ?, password = ? WHERE id = ?').run(nextUsername, nextHash, user.id);
+
+    const updated = await db.prepare(
+      'SELECT id, username, name, email, role, carpark_id FROM users WHERE id = ?'
+    ).get(req.session.userId);
+
+    const token = jwt.sign(
+      {
+        userId: updated.id,
+        username: updated.username,
+        name: updated.name,
+        role: updated.role,
+        carparkId: updated.carpark_id,
+      },
+      JWT_SECRET(),
+      { expiresIn: '8h' }
+    );
+    res.cookie('auth_token', token, COOKIE_OPTS);
+    res.json({ success: true, user: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

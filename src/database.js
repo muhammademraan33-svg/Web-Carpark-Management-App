@@ -394,24 +394,21 @@ async function initializeDatabase() {
         100);
   }
 
-  // Admin user: always ensure admin/admin123 exists
-  const adminRow = await db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
-  const adminHash = bcrypt.hashSync('admin123', 10);
-  if (!adminRow) {
-    await db.prepare(`INSERT INTO users (username, password, name, email, role, carpark_id) VALUES (?, ?, ?, ?, ?, ?)`)
-      .run('admin', adminHash, 'Administrator', 'admin@carparkyard.co.nz', 'admin', 1);
-  } else {
-    await db.prepare('UPDATE users SET password = ? WHERE username = ?').run(adminHash, 'admin');
-  }
-
-  // Staff user: always ensure staff/staff123 exists
-  const staffRow = await db.prepare('SELECT id FROM users WHERE username = ?').get('staff');
-  const staffHash = bcrypt.hashSync('staff123', 10);
-  if (!staffRow) {
-    await db.prepare(`INSERT INTO users (username, password, name, email, role, carpark_id) VALUES (?, ?, ?, ?, ?, ?)`)
-      .run('staff', staffHash, 'Flo', 'flo@carparkyard.co.nz', 'staff', 1);
-  } else {
-    await db.prepare('UPDATE users SET password = ? WHERE username = ?').run(staffHash, 'staff');
+  // First admin user: only when there are zero users, and only if env vars are set (no hardcoded credentials).
+  const userCountRow = await db.prepare('SELECT COUNT(*) as c FROM users').get();
+  const userCount = userCountRow && userCountRow.c != null ? Number(userCountRow.c) : 0;
+  if (userCount === 0) {
+    const initUser = (process.env.INITIAL_ADMIN_USERNAME || '').trim();
+    const initPass = process.env.INITIAL_ADMIN_PASSWORD || '';
+    const initName = (process.env.INITIAL_ADMIN_NAME || 'Administrator').trim() || 'Administrator';
+    if (initUser && initPass.length >= 6) {
+      const hash = bcrypt.hashSync(initPass, 10);
+      await db.prepare(`INSERT INTO users (username, password, name, email, role, carpark_id) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(initUser, hash, initName, '', 'admin', 1);
+      console.log('[DB] Created initial admin user from INITIAL_ADMIN_USERNAME / INITIAL_ADMIN_PASSWORD');
+    } else {
+      console.warn('[DB] No users found. Set INITIAL_ADMIN_USERNAME and INITIAL_ADMIN_PASSWORD (min 6 characters) in the environment, then restart, or insert a user manually.');
+    }
   }
 
   // Pricing rules

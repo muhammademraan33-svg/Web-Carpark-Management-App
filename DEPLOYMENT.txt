@@ -32,11 +32,20 @@ QUICK START (LOCAL)
 6. Open your browser and go to:
      http://localhost:3000
 
-DEFAULT LOGINS
---------------
-  Admin user:   admin  / admin123
-  Staff user:   staff  / staff123
-  You can change them after login via Admin → Admin Settings → Change Password tab.
+LOGINS & PASSWORDS
+------------------
+  There are no default usernames or passwords in the application code.
+
+  • Existing database: sign in with the username and password stored in the users table.
+
+  • Brand-new database (empty users table): set these environment variables before the first
+    start, then restart once so the first admin account is created:
+      INITIAL_ADMIN_USERNAME=your_username
+      INITIAL_ADMIN_PASSWORD=your_secure_password   (minimum 6 characters)
+      INITIAL_ADMIN_NAME=Administrator              (optional display name)
+
+  • After login: Admin → Login & password tab to change username and/or password (or add staff
+    users under Staff Users).
 
 PROJECT STRUCTURE
 -----------------

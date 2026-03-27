@@ -21,7 +21,7 @@
       <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tab-users">Staff Users</a></li>
       <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-carpark">Carpark Settings</a></li>
       <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-pricing">Pricing Rules</a></li>
-      <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-password">Change Password</a></li>
+      <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-password">Login &amp; password</a></li>
       <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-system">System</a></li>
     </ul>
 
@@ -139,24 +139,29 @@
         </button>
       </div>
 
-      <!-- Change Password -->
+      <!-- Login & password (username + password; no defaults in code — use env only for first-time bootstrap) -->
       <div class="tab-pane fade" id="tab-password">
-        <h5 class="mb-3">Change Your Password</h5>
+        <h5 class="mb-2">Login &amp; password</h5>
+        <p class="text-muted small mb-3">Change the username you sign in with and/or your password. Your current password is required.</p>
         <div class="row">
-          <div class="col-md-5">
+          <div class="col-md-6 col-lg-5">
             <div class="mb-3">
-              <label class="form-label">Current Password</label>
-              <input type="password" class="form-control" id="pw-current">
+              <label class="form-label">Current password <span class="text-danger">*</span></label>
+              <input type="password" class="form-control" id="pw-current" autocomplete="current-password">
             </div>
             <div class="mb-3">
-              <label class="form-label">New Password</label>
-              <input type="password" class="form-control" id="pw-new">
+              <label class="form-label">New username</label>
+              <input type="text" class="form-control" id="pw-new-username" placeholder="Leave blank to keep current" autocomplete="username">
             </div>
             <div class="mb-3">
-              <label class="form-label">Confirm New Password</label>
-              <input type="password" class="form-control" id="pw-confirm">
+              <label class="form-label">New password</label>
+              <input type="password" class="form-control" id="pw-new" placeholder="Leave blank to keep current" autocomplete="new-password">
             </div>
-            <button class="btn btn-primary" id="btn-change-pw">Change Password</button>
+            <div class="mb-3">
+              <label class="form-label">Confirm new password</label>
+              <input type="password" class="form-control" id="pw-confirm" autocomplete="new-password">
+            </div>
+            <button class="btn btn-primary" id="btn-change-pw"><i class="bi bi-shield-lock me-1"></i>Save changes</button>
           </div>
         </div>
       </div>
@@ -441,26 +446,41 @@
       loadPricing();
     });
 
-    // Change password
+    // Login & password (username + password)
     document.getElementById('btn-change-pw').addEventListener('click', async () => {
       const current = document.getElementById('pw-current').value;
+      const newUsername = document.getElementById('pw-new-username').value.trim();
       const newPw = document.getElementById('pw-new').value;
       const confirm = document.getElementById('pw-confirm').value;
-      if (newPw !== confirm) { showAlert('Passwords do not match', 'danger'); return; }
-      if (newPw.length < 6) { showAlert('Password must be at least 6 characters', 'warning'); return; }
-      const res = await fetch('/api/admin/change-password', {
-        method: 'POST',
+      if (!current) { showAlert('Enter your current password', 'warning'); return; }
+      if (!newUsername && !newPw) { showAlert('Enter a new username and/or new password', 'warning'); return; }
+      if (newPw && newPw !== confirm) { showAlert('New passwords do not match', 'danger'); return; }
+      if (newPw && newPw.length < 6) { showAlert('New password must be at least 6 characters', 'warning'); return; }
+      const res = await fetch('/api/admin/me', {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ current_password: current, new_password: newPw })
+        body: JSON.stringify({
+          current_password: current,
+          new_username: newUsername || undefined,
+          new_password: newPw || undefined,
+          new_password_confirm: confirm || undefined
+        })
       });
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        showAlert('Password changed successfully', 'success');
+        showAlert('Login details updated', 'success');
         document.getElementById('pw-current').value = '';
+        document.getElementById('pw-new-username').value = '';
         document.getElementById('pw-new').value = '';
         document.getElementById('pw-confirm').value = '';
+        if (data.user) {
+          const uEl = document.getElementById('nav-user-name');
+          if (uEl) uEl.textContent = data.user.name || data.user.username;
+          const rEl = document.getElementById('nav-user-role');
+          if (rEl) rEl.textContent = data.user.role || '';
+        }
       } else {
-        const err = await res.json();
-        showAlert(err.error || 'Error', 'danger');
+        showAlert(data.error || 'Error', 'danger');
       }
     });
 
