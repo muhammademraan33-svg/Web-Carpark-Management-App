@@ -299,7 +299,7 @@
         const tf = document.getElementById('return-time-filter');
         if (tf) tf.value = urlTimeFilter;
       }
-      const statsRes = await fetch('/api/dashboard/stats');
+      const statsRes = await fetch('/api/dashboard/stats', { cache: 'no-store' });
       if (statsRes.ok) {
         const stats = await statsRes.json();
         if (stats.businessDate) {

@@ -158,7 +158,7 @@ function monthName(num) {
 // Update cars in yard count in navbar
 async function updateNavCarsCount() {
   try {
-    const res = await fetch('/api/dashboard/stats');
+    const res = await fetch('/api/dashboard/stats', { cache: 'no-store' });
     if (res.ok) {
       const data = await res.json();
       const el = document.getElementById('nav-cars-count');

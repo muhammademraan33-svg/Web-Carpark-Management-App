@@ -176,15 +176,16 @@
         document.getElementById('carpark-subtitle').textContent = cp.name + (cp.address ? ' — ' + cp.address : '');
       }
 
-      // Load dashboard stats
-      const statsRes = await fetch('/api/dashboard/stats');
+      // Load dashboard stats (always fresh — occupancy depends on current key_box rows)
+      const statsRes = await fetch('/api/dashboard/stats', { cache: 'no-store' });
       if (!statsRes.ok) return;
       const stats = await statsRes.json();
 
       document.getElementById('stat-cars').textContent = stats.carsInYard;
       document.getElementById('stat-revenue-today').textContent = formatCurrency(stats.revenueToday);
       document.getElementById('stat-returning').textContent = stats.carsReturnToday;
-      document.getElementById('stat-occupancy').textContent = stats.occupancyRate + '%';
+      const occ = Number(stats.occupancyRate ?? 0);
+      document.getElementById('stat-occupancy').textContent = `${occ.toFixed(1)}%`;
       document.getElementById('nav-cars-count').textContent = stats.carsInYard + ' Cars';
       document.getElementById('month-revenue').textContent = formatCurrency(stats.revenueMonth);
 
