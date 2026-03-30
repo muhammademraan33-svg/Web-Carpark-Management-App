@@ -85,6 +85,133 @@ router.get('/:id', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/longterm/:id/payments
+router.get('/:id/payments', requireAuth, async (req, res) => {
+  try {
+    const carparkId = req.session.carparkId || 1;
+    const ltId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(ltId)) return res.status(400).json({ error: 'Invalid LT id' });
+
+    const lt = await db.prepare(`
+      SELECT id, contract_amount
+      FROM longterm_customers
+      WHERE id = ? AND carpark_id = ? AND active = 1
+    `).get(ltId, carparkId);
+    if (!lt) return res.status(404).json({ error: 'Long-term customer not found' });
+
+    const payments = await db.prepare(`
+      SELECT
+        id,
+        payment_date,
+        amount_ex_gst,
+        payment_method,
+        transaction_reference,
+        notes,
+        created_at
+      FROM longterm_payments
+      WHERE carpark_id = ? AND longterm_customer_id = ?
+      ORDER BY payment_date DESC, created_at DESC
+    `).all(carparkId, ltId);
+
+    const paidRow = await db.prepare(`
+      SELECT COALESCE(SUM(amount_ex_gst), 0) AS paid_ex_gst,
+             COUNT(*) AS count
+      FROM longterm_payments
+      WHERE carpark_id = ? AND longterm_customer_id = ?
+    `).get(carparkId, ltId);
+
+    const contractExGst = lt.contract_amount != null && lt.contract_amount !== '' ? parseFloat(lt.contract_amount) : 0;
+    const paidExGst = parseFloat(paidRow?.paid_ex_gst || 0);
+    const remainingExGst = contractExGst > 0 ? Math.max(0, contractExGst - paidExGst) : 0;
+
+    res.json({
+      payments,
+      paidExGst,
+      contractExGst,
+      remainingExGst,
+      count: paidRow?.count || 0
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/longterm/:id/payments
+router.post('/:id/payments', requireAuth, async (req, res) => {
+  try {
+    const carparkId = req.session.carparkId || 1;
+    const ltId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(ltId)) return res.status(400).json({ error: 'Invalid LT id' });
+
+    const lt = await db.prepare(`
+      SELECT id, contract_amount, payment_status
+      FROM longterm_customers
+      WHERE id = ? AND carpark_id = ? AND active = 1
+    `).get(ltId, carparkId);
+    if (!lt) return res.status(404).json({ error: 'Long-term customer not found' });
+
+    const {
+      payment_date,
+      amount_ex_gst,
+      payment_method,
+      transaction_reference,
+      notes
+    } = req.body || {};
+
+    const pDate = payment_date ? String(payment_date).slice(0, 10) : null;
+    if (!pDate) return res.status(400).json({ error: 'payment_date is required (YYYY-MM-DD)' });
+
+    const amt = parseFloat(amount_ex_gst);
+    if (!Number.isFinite(amt) || amt <= 0) return res.status(400).json({ error: 'amount_ex_gst must be > 0' });
+
+    const method = payment_method ? String(payment_method).trim() : null;
+    const txRef = transaction_reference ? String(transaction_reference).trim() : null;
+    const payNotes = notes ? String(notes).trim() : null;
+
+    await db.prepare(`
+      INSERT INTO longterm_payments
+        (carpark_id, longterm_customer_id, payment_date, amount_ex_gst, payment_method, transaction_reference, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(carparkId, ltId, pDate, amt, method, txRef, payNotes);
+
+    const paidRow = await db.prepare(`
+      SELECT COALESCE(SUM(amount_ex_gst), 0) AS paid_ex_gst
+      FROM longterm_payments
+      WHERE carpark_id = ? AND longterm_customer_id = ?
+    `).get(carparkId, ltId);
+
+    const paidExGst = parseFloat(paidRow?.paid_ex_gst || 0);
+    const contractExGst = lt.contract_amount != null && lt.contract_amount !== '' ? parseFloat(lt.contract_amount) : 0;
+
+    let nextStatus = lt.payment_status || 'Unpaid';
+    if (contractExGst > 0) {
+      if (paidExGst <= 0) nextStatus = 'Unpaid';
+      else if (paidExGst >= contractExGst) nextStatus = 'Paid';
+      else nextStatus = 'Partial';
+    } else {
+      nextStatus = paidExGst > 0 ? 'Partial' : 'Unpaid';
+    }
+
+    await db.prepare(`
+      UPDATE longterm_customers
+      SET payment_status = ?
+      WHERE id = ? AND carpark_id = ?
+    `).run(nextStatus, ltId, carparkId);
+
+    const remainingExGst = contractExGst > 0 ? Math.max(0, contractExGst - paidExGst) : 0;
+
+    res.json({
+      success: true,
+      payment_status: nextStatus,
+      paidExGst,
+      contractExGst,
+      remainingExGst
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/:id/keybox', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;

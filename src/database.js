@@ -229,6 +229,21 @@ async function initializeDatabase() {
   try { x(`ALTER TABLE longterm_customers ADD COLUMN lt_in_yard INTEGER DEFAULT 0`); } catch (_) {}
   try { x(`UPDATE longterm_customers SET payment_status = 'Unpaid' WHERE payment_status IS NULL OR payment_status = ''`); } catch (_) {}
 
+  // Long-term payment records (monthly/annual plans tracked via payment history)
+  x(`CREATE TABLE IF NOT EXISTS longterm_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    carpark_id INTEGER DEFAULT 1,
+    longterm_customer_id INTEGER NOT NULL,
+    payment_date DATE NOT NULL,
+    amount_ex_gst REAL NOT NULL,
+    payment_method TEXT,
+    transaction_reference TEXT,
+    notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  try { x(`CREATE INDEX IF NOT EXISTS lt_payments_by_customer ON longterm_payments (carpark_id, longterm_customer_id, payment_date DESC)`); } catch (_) {}
+
   x(`CREATE TABLE IF NOT EXISTS account_customers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_name TEXT NOT NULL,
