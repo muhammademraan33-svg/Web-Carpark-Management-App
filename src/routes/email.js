@@ -47,6 +47,16 @@ function dueDate20thNextMonth(month, year) {
   return `${nextYear}-${String(nextMonth).padStart(2, '0')}-20`;
 }
 
+function fmtYmd(d) {
+  if (!d) return '';
+  const s = String(d);
+  // Accept ISO date or datetime.
+  const ymd = s.length >= 10 ? s.slice(0, 10) : s;
+  const dt = new Date(ymd + 'T00:00:00Z');
+  if (Number.isNaN(dt.getTime())) return ymd;
+  return dt.toLocaleDateString('en-NZ', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
 function buildAccountEmailHTML(carpark, account, invoices, total, monthName, year, dueDateYmd) {
   const rows = invoices.map(inv => {
     const dIn  = inv.date_in     ? new Date(inv.date_in).toLocaleDateString('en-NZ',     { day: 'numeric', month: 'short', year: '2-digit' }) : '';
@@ -376,6 +386,8 @@ router.post('/receipt/:invoiceId', requireAuth, async (req, res) => {
 function longTermEmailHTML(carpark, lt, kind) {
   const currency = (n) => `$${parseFloat(n || 0).toFixed(2)}`;
   const gst = longTermGstAmounts(lt);
+  const startDate = lt?.created_at ? fmtYmd(lt.created_at) : '';
+  const expiryDate = lt?.expiry_date ? fmtYmd(lt.expiry_date) : '';
   const bank = [
     carpark.bank_name ? `<p><strong>Bank:</strong> ${carpark.bank_name}</p>` : '',
     carpark.bank_account_name ? `<p><strong>Account name:</strong> ${carpark.bank_account_name}</p>` : '',
@@ -397,7 +409,8 @@ function longTermEmailHTML(carpark, lt, kind) {
     <tr><td style="padding:12px;"><strong>Amount due</strong></td><td style="padding:12px;text-align:right;font-size:18px;color:#c0392b;">${currency(gst.total)}</td></tr>
     <tr><td style="padding:12px;border-top:1px solid #dee2e6;">Amount ex GST</td><td style="padding:12px;border-top:1px solid #dee2e6;text-align:right;">${currency(gst.base)}</td></tr>
     <tr><td style="padding:12px;border-top:1px solid #dee2e6;">GST (${Math.round(gst.rate * 100)}%)</td><td style="padding:12px;border-top:1px solid #dee2e6;text-align:right;">${currency(gst.gst)}</td></tr>
-    ${lt.expiry_date ? `<tr><td style="padding:12px;border-top:1px solid #dee2e6;">Contract expiry</td><td style="padding:12px;border-top:1px solid #dee2e6;text-align:right;">${String(lt.expiry_date).slice(0, 10)}</td></tr>` : ''}
+    ${startDate ? `<tr><td style="padding:12px;border-top:1px solid #dee2e6;">Contract start</td><td style="padding:12px;border-top:1px solid #dee2e6;text-align:right;">${startDate}</td></tr>` : ''}
+    ${expiryDate ? `<tr><td style="padding:12px;border-top:1px solid #dee2e6;">Contract expiry</td><td style="padding:12px;border-top:1px solid #dee2e6;text-align:right;">${expiryDate}</td></tr>` : ''}
   </table>
   <h3 style="color:#2c3e50;font-size:15px;">Payment details</h3>
   ${bank || '<p>Please contact us for bank transfer details.</p>'}
@@ -415,7 +428,8 @@ function longTermEmailHTML(carpark, lt, kind) {
     <tr><td style="padding:12px;border-top:1px solid #c8e6c9;">Amount ex GST</td><td style="padding:12px;border-top:1px solid #c8e6c9;text-align:right;">${currency(gst.base)}</td></tr>
     <tr><td style="padding:12px;border-top:1px solid #c8e6c9;">GST (${Math.round(gst.rate * 100)}%)</td><td style="padding:12px;border-top:1px solid #c8e6c9;text-align:right;">${currency(gst.gst)}</td></tr>
     <tr><td style="padding:12px;border-top:1px solid #c8e6c9;">Status</td><td style="padding:12px;border-top:1px solid #c8e6c9;text-align:right;">${lt.payment_status || 'Paid'}</td></tr>
-    ${lt.expiry_date ? `<tr><td style="padding:12px;border-top:1px solid #c8e6c9;">Contract expiry</td><td style="padding:12px;border-top:1px solid #c8e6c9;text-align:right;">${String(lt.expiry_date).slice(0, 10)}</td></tr>` : ''}
+    ${startDate ? `<tr><td style="padding:12px;border-top:1px solid #c8e6c9;">Contract start</td><td style="padding:12px;border-top:1px solid #c8e6c9;text-align:right;">${startDate}</td></tr>` : ''}
+    ${expiryDate ? `<tr><td style="padding:12px;border-top:1px solid #c8e6c9;">Contract expiry</td><td style="padding:12px;border-top:1px solid #c8e6c9;text-align:right;">${expiryDate}</td></tr>` : ''}
   </table>
   <p style="color:#7f8c8d;font-size:12px;margin-top:24px;">${carpark.address || ''}<br>${carpark.phone || ''}</p>
 </body></html>`;
