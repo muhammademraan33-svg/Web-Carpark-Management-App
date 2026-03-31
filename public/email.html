@@ -45,9 +45,6 @@
             <button class="btn btn-primary" id="btn-preview-email">
               <i class="bi bi-eye me-1"></i>Preview Emails
             </button>
-            <button class="btn btn-outline-dark" id="btn-run-month-end-now" title="Admin only">
-              <i class="bi bi-lightning-charge me-1"></i>Run Month-End Now
-            </button>
           </div>
         </div>
         <div class="col-md-4">
@@ -404,31 +401,8 @@
       await loadEmailLogs();
     }
 
-    async function runMonthEndNow() {
-      if (!confirm('Run month-end emails now? This will send account and long-term monthly emails immediately.')) return;
-      const btn = document.getElementById('btn-run-month-end-now');
-      const oldHtml = btn.innerHTML;
-      btn.disabled = true;
-      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Running...';
-      try {
-        const res = await fetch('/api/admin/run-month-end-emails', { method: 'POST' });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          showAlert(data.error || 'Failed to run month-end emails', 'danger', 7000);
-          return;
-        }
-        showAlert('Month-end email job completed successfully.', 'success', 6000);
-        await loadEmailLogs();
-        await previewEmails();
-      } finally {
-        btn.disabled = false;
-        btn.innerHTML = oldHtml;
-      }
-    }
-
     document.getElementById('btn-preview-email').addEventListener('click', previewEmails);
     document.getElementById('btn-send-all').addEventListener('click', sendEmails);
-    document.getElementById('btn-run-month-end-now').addEventListener('click', runMonthEndNow);
     document.getElementById('btn-clear-email-history').addEventListener('click', () => {
       document.getElementById('confirm-clear-history-check').checked = false;
       document.getElementById('btn-confirm-clear-history').disabled = true;

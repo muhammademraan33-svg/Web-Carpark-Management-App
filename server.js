@@ -118,7 +118,7 @@ app.get('/', (req, res) => {
   res.redirect('/login.html');
 });
 
-async function runMonthEndEmailJob({ force = false } = {}) {
+async function runMonthEndEmailJob({ force = false, includeAccounts = true, includeLongTerm = true } = {}) {
   console.log(`Running month-end account/LT email job${force ? ' (manual force)' : ''}...`);
   try {
     const nodemailer = require('nodemailer');
@@ -159,97 +159,101 @@ async function runMonthEndEmailJob({ force = false } = {}) {
         }
       });
 
-      for (const account of accounts) {
-        const invoices = await db.prepare(`
-          SELECT * FROM invoices WHERE account_customer_id = ? AND void = 0
-          AND DATE(date_in) >= ? AND DATE(date_in) <= ?
-          ORDER BY date_in ASC
-        `).all(account.id, startDate, endDate);
+      if (includeAccounts) {
+        for (const account of accounts) {
+          const invoices = await db.prepare(`
+            SELECT * FROM invoices WHERE account_customer_id = ? AND void = 0
+            AND DATE(date_in) >= ? AND DATE(date_in) <= ?
+            ORDER BY date_in ASC
+          `).all(account.id, startDate, endDate);
 
-        if (invoices.length === 0) continue;
+          if (invoices.length === 0) continue;
 
-        const emailTo = account.billing_email || account.email;
-        if (!emailTo) continue;
+          const emailTo = account.billing_email || account.email;
+          if (!emailTo) continue;
 
-        const total = invoices.reduce((s, inv) => s + (inv.payment_amount || 0), 0);
-        const rows  = invoices.map(inv => {
-          const dIn  = inv.date_in     ? new Date(inv.date_in).toLocaleDateString('en-NZ',     { day:'numeric', month:'short', year:'2-digit' }) : '';
-          const dOut = inv.return_date ? new Date(inv.return_date).toLocaleDateString('en-NZ', { day:'numeric', month:'short', year:'2-digit' }) : '';
-          return `<tr><td>${dIn} - ${dOut}</td><td>${inv.first_name||''} ${inv.last_name||''}</td><td>${inv.rego||''}</td><td>$${parseFloat(inv.payment_amount||0).toFixed(2)}</td></tr>`;
-        }).join('');
+          const total = invoices.reduce((s, inv) => s + (inv.payment_amount || 0), 0);
+          const rows  = invoices.map(inv => {
+            const dIn  = inv.date_in     ? new Date(inv.date_in).toLocaleDateString('en-NZ',     { day:'numeric', month:'short', year:'2-digit' }) : '';
+            const dOut = inv.return_date ? new Date(inv.return_date).toLocaleDateString('en-NZ', { day:'numeric', month:'short', year:'2-digit' }) : '';
+            return `<tr><td>${dIn} - ${dOut}</td><td>${inv.first_name||''} ${inv.last_name||''}</td><td>${inv.rego||''}</td><td>$${parseFloat(inv.payment_amount||0).toFixed(2)}</td></tr>`;
+          }).join('');
 
-        const paymentLink = account.payment_link
-          ? `<p><a href="${account.payment_link}" style="background:#27ae60;color:#fff;padding:10px 20px;border-radius:5px;text-decoration:none;">Pay Online</a></p>`
-          : '';
+          const paymentLink = account.payment_link
+            ? `<p><a href="${account.payment_link}" style="background:#27ae60;color:#fff;padding:10px 20px;border-radius:5px;text-decoration:none;">Pay Online</a></p>`
+            : '';
 
-        const bank = [
-          carpark.bank_name ? `<p><strong>Bank:</strong> ${carpark.bank_name}</p>` : '',
-          carpark.bank_account_name ? `<p><strong>Account name:</strong> ${carpark.bank_account_name}</p>` : '',
-          carpark.bank_account_number ? `<p><strong>Account number:</strong> ${carpark.bank_account_number}</p>` : '',
-          carpark.bank_reference ? `<p><strong>Reference:</strong> ${carpark.bank_reference} — ${account.company_name}</p>` : `<p><strong>Reference:</strong> ${account.company_name}</p>`,
-        ].join('');
+          const bank = [
+            carpark.bank_name ? `<p><strong>Bank:</strong> ${carpark.bank_name}</p>` : '',
+            carpark.bank_account_name ? `<p><strong>Account name:</strong> ${carpark.bank_account_name}</p>` : '',
+            carpark.bank_account_number ? `<p><strong>Account number:</strong> ${carpark.bank_account_number}</p>` : '',
+            carpark.bank_reference ? `<p><strong>Reference:</strong> ${carpark.bank_reference} — ${account.company_name}</p>` : `<p><strong>Reference:</strong> ${account.company_name}</p>`,
+          ].join('');
 
-        const html = `<!DOCTYPE html><html><body style="font-family:Arial;max-width:700px;margin:0 auto;padding:20px;">
-          <h2 style="color:#2c3e50;font-style:italic;">${carpark.name} - GST - ${monthName} ${year} Account Invoice</h2><hr>
-          <h3 style="color:#e74c3c;">${account.company_name}</h3>
-          <table border="1" cellpadding="8" cellspacing="0" width="100%">
-            <tr><th>Stay</th><th>Name</th><th>Car Rego</th><th>Cost</th></tr>${rows}
-          </table>
-          <p><strong>Total: <span style="color:#27ae60;">$${parseFloat(total).toFixed(2)}</span></strong></p>
-          <p><strong>Payment due date:</strong> 20th of next month (${dueDateYmd})</p>
-          ${paymentLink}
-          ${bank ? `<hr><h3 style="color:#2c3e50;font-size:15px;">Payment details</h3>${bank}` : ''}
-        </body></html>`;
+          const html = `<!DOCTYPE html><html><body style="font-family:Arial;max-width:700px;margin:0 auto;padding:20px;">
+            <h2 style="color:#2c3e50;font-style:italic;">${carpark.name} - GST - ${monthName} ${year} Account Invoice</h2><hr>
+            <h3 style="color:#e74c3c;">${account.company_name}</h3>
+            <table border="1" cellpadding="8" cellspacing="0" width="100%">
+              <tr><th>Stay</th><th>Name</th><th>Car Rego</th><th>Cost</th></tr>${rows}
+            </table>
+            <p><strong>Total: <span style="color:#27ae60;">$${parseFloat(total).toFixed(2)}</span></strong></p>
+            <p><strong>Payment due date:</strong> 20th of next month (${dueDateYmd})</p>
+            ${paymentLink}
+            ${bank ? `<hr><h3 style="color:#2c3e50;font-size:15px;">Payment details</h3>${bank}` : ''}
+          </body></html>`;
 
-        try {
-          await transporter.sendMail({
-            from: process.env.EMAIL_FROM || `BOI Car Storage <boicarparkkerikeri@gmail.com>`,
-            to:   emailTo,
-            subject: `${carpark.name} - GST - ${monthName} ${year} Account Invoice`,
-            html
-          });
-          await db.prepare(`INSERT INTO email_logs
-            (carpark_id, account_customer_id, account_name, month, year, sent_at, status, recipient_email)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`)
-            .run(carpark.id, account.id, account.company_name, month, year, 'sent', emailTo);
-          console.log(`Sent account email to ${emailTo}`);
-        } catch (err) {
-          console.error(`Failed to send to ${emailTo}:`, err.message);
-          await db.prepare(`INSERT INTO email_logs
-            (carpark_id, account_customer_id, account_name, month, year, status, error_msg, recipient_email)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-            .run(carpark.id, account.id, account.company_name, month, year, 'failed', err.message, emailTo);
+          try {
+            await transporter.sendMail({
+              from: process.env.EMAIL_FROM || `BOI Car Storage <boicarparkkerikeri@gmail.com>`,
+              to:   emailTo,
+              subject: `${carpark.name} - GST - ${monthName} ${year} Account Invoice`,
+              html
+            });
+            await db.prepare(`INSERT INTO email_logs
+              (carpark_id, account_customer_id, account_name, month, year, sent_at, status, recipient_email)
+              VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`)
+              .run(carpark.id, account.id, account.company_name, month, year, 'sent', emailTo);
+            console.log(`Sent account email to ${emailTo}`);
+          } catch (err) {
+            console.error(`Failed to send to ${emailTo}:`, err.message);
+            await db.prepare(`INSERT INTO email_logs
+              (carpark_id, account_customer_id, account_name, month, year, status, error_msg, recipient_email)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+              .run(carpark.id, account.id, account.company_name, month, year, 'failed', err.message, emailTo);
+          }
         }
       }
 
-      // Monthly Long-term invoices (default monthly plan: $200 ex GST)
-      const ltCustomers = await db.prepare('SELECT * FROM longterm_customers WHERE carpark_id = ? AND active = 1').all(carpark.id);
-      for (const lt of ltCustomers) {
-        const emailTo = String(lt.email || '').trim();
-        if (!emailTo) continue;
-        const baseExGst = 200.00;
-        const gstAmt = Math.round((baseExGst * 0.15) * 100) / 100;
-        const total = Math.round((baseExGst + gstAmt) * 100) / 100;
-        const html = `<!DOCTYPE html><html><body style="font-family:Arial;max-width:700px;margin:0 auto;padding:20px;">
-          <h2 style="color:#2c3e50;font-style:italic;">${carpark.name} - Long-term Monthly Payment</h2><hr>
-          <p>Hi ${lt.name || ''},</p>
-          <p>This is your monthly long-term storage invoice for <strong>${monthName} ${year}</strong>.</p>
-          <table border="1" cellpadding="8" cellspacing="0" width="100%">
-            <tr><th>Plan</th><th>Amount ex GST</th><th>GST (15%)</th><th>Total</th></tr>
-            <tr><td>Monthly</td><td>$${baseExGst.toFixed(2)}</td><td>$${gstAmt.toFixed(2)}</td><td><strong>$${total.toFixed(2)}</strong></td></tr>
-          </table>
-          <p><strong>Payment due:</strong> by the 20th (${dueDateYmd})</p>
-          <p style="color:#666;">Reference: ${lt.lt_number || ''}</p>
-        </body></html>`;
-        try {
-          await transporter.sendMail({
-            from: process.env.EMAIL_FROM || `BOI Car Storage <boicarparkkerikeri@gmail.com>`,
-            to: emailTo,
-            subject: `${carpark.name} - Long-term Monthly Invoice (${monthName} ${year})`,
-            html
-          });
-        } catch (err) {
-          console.error(`Failed LT monthly send to ${emailTo}:`, err.message);
+      if (includeLongTerm) {
+        // Monthly Long-term invoices (default monthly plan: $200 ex GST)
+        const ltCustomers = await db.prepare('SELECT * FROM longterm_customers WHERE carpark_id = ? AND active = 1').all(carpark.id);
+        for (const lt of ltCustomers) {
+          const emailTo = String(lt.email || '').trim();
+          if (!emailTo) continue;
+          const baseExGst = 200.00;
+          const gstAmt = Math.round((baseExGst * 0.15) * 100) / 100;
+          const total = Math.round((baseExGst + gstAmt) * 100) / 100;
+          const html = `<!DOCTYPE html><html><body style="font-family:Arial;max-width:700px;margin:0 auto;padding:20px;">
+            <h2 style="color:#2c3e50;font-style:italic;">${carpark.name} - Long-term Monthly Payment</h2><hr>
+            <p>Hi ${lt.name || ''},</p>
+            <p>This is your monthly long-term storage invoice for <strong>${monthName} ${year}</strong>.</p>
+            <table border="1" cellpadding="8" cellspacing="0" width="100%">
+              <tr><th>Plan</th><th>Amount ex GST</th><th>GST (15%)</th><th>Total</th></tr>
+              <tr><td>Monthly</td><td>$${baseExGst.toFixed(2)}</td><td>$${gstAmt.toFixed(2)}</td><td><strong>$${total.toFixed(2)}</strong></td></tr>
+            </table>
+            <p><strong>Payment due:</strong> by the 20th (${dueDateYmd})</p>
+            <p style="color:#666;">Reference: ${lt.lt_number || ''}</p>
+          </body></html>`;
+          try {
+            await transporter.sendMail({
+              from: process.env.EMAIL_FROM || `BOI Car Storage <boicarparkkerikeri@gmail.com>`,
+              to: emailTo,
+              subject: `${carpark.name} - Long-term Monthly Invoice (${monthName} ${year})`,
+              html
+            });
+          } catch (err) {
+            console.error(`Failed LT monthly send to ${emailTo}:`, err.message);
+          }
         }
       }
     }
@@ -275,7 +279,12 @@ cron.schedule('0 8 28-31 * *', async () => {
 app.post('/api/admin/run-month-end-emails', async (req, res) => {
   if (!req.session || req.session.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   try {
-    const result = await runMonthEndEmailJob({ force: true });
+    const includeAccounts = req.body && req.body.includeAccounts === true;
+    const includeLongTerm = req.body && req.body.includeLongTerm === true;
+    if (!includeAccounts && !includeLongTerm) {
+      return res.status(400).json({ error: 'Choose includeAccounts and/or includeLongTerm' });
+    }
+    const result = await runMonthEndEmailJob({ force: true, includeAccounts, includeLongTerm });
     res.json({ success: true, ...result });
   } catch (e) {
     res.status(500).json({ error: e.message || 'Failed to run month-end emails' });

@@ -129,6 +129,14 @@
           </button>
           <pre id="status-output" class="mt-2 p-3 bg-light rounded small" style="display:none;max-height:300px;overflow:auto;"></pre>
         </div>
+        <div class="mb-4">
+          <div class="alert alert-info small mb-2">
+            <strong>Month-end emails:</strong> This sends the automated month-end emails immediately. Choose exactly what to send.
+          </div>
+          <button class="btn btn-outline-dark btn-sm" id="btn-run-month-end-admin">
+            <i class="bi bi-lightning-charge me-1"></i>Run Month-End Emails Now
+          </button>
+        </div>
         <hr>
         <div class="alert alert-warning">
           <strong>⚠️ Reset Database</strong> — deletes all blobs and re-seeds from scratch.
@@ -254,6 +262,36 @@
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
           <button type="button" class="btn btn-danger btn-sm" id="btn-delete-pricing" style="display:none;">Delete</button>
           <button type="button" class="btn btn-primary" id="btn-save-pricing">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Month-end email modal -->
+  <div class="modal fade" id="monthEndEmailModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Run Month-End Emails</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-muted mb-2">Select what you want to send now:</p>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="me-accounts" checked>
+            <label class="form-check-label" for="me-accounts">Account invoices</label>
+          </div>
+          <div class="form-check mt-1">
+            <input class="form-check-input" type="checkbox" id="me-longterm">
+            <label class="form-check-label" for="me-longterm">Long-term monthly invoices</label>
+          </div>
+          <div class="alert alert-warning small mt-3 mb-0">
+            This will send real emails immediately.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-dark" id="btn-confirm-month-end-send">Send Now</button>
         </div>
       </div>
     </div>
@@ -524,6 +562,45 @@
         showAlert('Error: ' + e.message, 'danger');
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-trash me-1"></i> Reset &amp; Re-seed Database';
+      }
+    });
+
+    // Month-end emails (admin only)
+    document.getElementById('btn-run-month-end-admin').addEventListener('click', () => {
+      document.getElementById('me-accounts').checked = true;
+      document.getElementById('me-longterm').checked = false;
+      new bootstrap.Modal('#monthEndEmailModal').show();
+    });
+
+    document.getElementById('btn-confirm-month-end-send').addEventListener('click', async () => {
+      const includeAccounts = document.getElementById('me-accounts').checked;
+      const includeLongTerm = document.getElementById('me-longterm').checked;
+      if (!includeAccounts && !includeLongTerm) {
+        showAlert('Select at least one option', 'warning');
+        return;
+      }
+      if (!confirm('Send selected month-end emails now?')) return;
+
+      const btn = document.getElementById('btn-confirm-month-end-send');
+      const old = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Sending…';
+      try {
+        const res = await fetch('/api/admin/run-month-end-emails', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ includeAccounts, includeLongTerm })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          showAlert(data.error || 'Failed to run month-end emails', 'danger', 7000);
+          return;
+        }
+        showAlert('Month-end emails sent.', 'success', 6000);
+        bootstrap.Modal.getInstance('#monthEndEmailModal').hide();
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = old;
       }
     });
 

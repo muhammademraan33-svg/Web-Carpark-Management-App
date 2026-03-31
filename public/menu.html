@@ -201,7 +201,7 @@
           <div class="ms-2 small fw-bold">${formatCurrency(m.total)}</div>
         </div>
       `).join('');
-      document.getElementById('revenue-breakdown').innerHTML = methodHtml || '<p class="text-muted small">No data</p>';
+      document.getElementById('revenue-breakdown').innerHTML = methodHtml || '<p class="text-muted small">No payments recorded this month</p>';
 
       // Recent invoices
       const recentHtml = (stats.recentInvoices || []).slice(0, 6).map(inv => `
