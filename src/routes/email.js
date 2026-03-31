@@ -58,7 +58,19 @@ function fmtYmd(d) {
   return dt.toLocaleDateString('en-NZ', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-function buildAccountEmailHTML(carpark, account, invoices, total, monthName, year, dueDateYmd) {
+function accountInvoiceNumber(year, month2, accountId) {
+  const y = String(year);
+  const m = String(month2).padStart(2, '0');
+  return `ACC-${y}${m}-${accountId}`;
+}
+
+function referenceForAccountInvoice(carpark, account, invoiceNo) {
+  // Always use the generated invoice number as the bank reference.
+  // This keeps it unique + searchable and avoids static/duplicate references.
+  return invoiceNo;
+}
+
+function buildAccountEmailHTML(carpark, account, invoices, total, monthName, year, month2, dueDateYmd) {
   const rows = invoices.map(inv => {
     const dIn  = inv.date_in     ? new Date(inv.date_in).toLocaleDateString('en-NZ',     { day: 'numeric', month: 'short', year: '2-digit' }) : '';
     const dOut = inv.return_date ? new Date(inv.return_date).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short', year: '2-digit' }) : '';
@@ -78,9 +90,11 @@ function buildAccountEmailHTML(carpark, account, invoices, total, monthName, yea
     carpark.bank_name ? `<p><strong>Bank:</strong> ${carpark.bank_name}</p>` : '',
     carpark.bank_account_name ? `<p><strong>Account name:</strong> ${carpark.bank_account_name}</p>` : '',
     carpark.bank_account_number ? `<p><strong>Account number:</strong> ${carpark.bank_account_number}</p>` : '',
-    carpark.bank_reference
-      ? `<p><strong>Reference:</strong> ${carpark.bank_reference} — ${account.company_name}</p>`
-      : `<p><strong>Reference:</strong> ${account.company_name}</p>`,
+    (() => {
+      const invNo = accountInvoiceNumber(year, month2, account.id);
+      const ref = referenceForAccountInvoice(carpark, account, invNo);
+      return `<p><strong>Invoice #:</strong> ${invNo}</p><p><strong>Reference:</strong> ${ref}</p>`;
+    })(),
   ].join('');
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
@@ -114,7 +128,7 @@ function sanitizeFilename(s) {
     .slice(0, 80) || 'account';
 }
 
-function buildAccountInvoicePDF({ res, carpark, account, invoices, total, monthName, year, dueDateYmd }) {
+function buildAccountInvoicePDF({ res, carpark, account, invoices, total, monthName, year, month2, dueDateYmd }) {
   const doc = new PDFDocument({ size: 'A4', margin: 40 });
   doc.pipe(res);
 
@@ -124,7 +138,9 @@ function buildAccountInvoicePDF({ res, carpark, account, invoices, total, monthN
   const right = doc.page.width - doc.page.margins.right;
   const fullWidth = right - left;
 
+  const invNo = accountInvoiceNumber(year, month2, account.id);
   doc.fillColor('#2c3e50').fontSize(18).text(`${carpark.name} – GST – ${monthName} ${year} Account Invoice`, { align: 'left' });
+  doc.fontSize(10).fillColor('#555').text(`Invoice #: ${invNo}`);
   doc.fontSize(10).fillColor('#555').text(`Payment due date: 20th of next month (${dueDateYmd})`);
   line();
 
@@ -173,11 +189,12 @@ function buildAccountInvoicePDF({ res, carpark, account, invoices, total, monthN
   doc.fontSize(12).fillColor('#2c3e50').text('Payment details', left, doc.y, { width: fullWidth, align: 'left' });
   doc.moveDown(0.4);
   doc.fontSize(10).fillColor('#111');
-  const ref = carpark.bank_reference ? `${carpark.bank_reference} — ${account.company_name}` : `${account.company_name}`;
+  const ref = referenceForAccountInvoice(carpark, account, invNo);
   const rows = [
     carpark.bank_name ? `Bank: ${carpark.bank_name}` : null,
     carpark.bank_account_name ? `Account name: ${carpark.bank_account_name}` : null,
     carpark.bank_account_number ? `Account number: ${carpark.bank_account_number}` : null,
+    `Invoice #: ${invNo}`,
     `Reference: ${ref}`,
   ].filter(Boolean);
   // Render full-width, left aligned (wraps naturally across the page).
@@ -292,11 +309,12 @@ router.get('/account-invoice.pdf', requireAuth, async (req, res) => {
 
     const total = invoices.reduce((s, inv) => s + (inv.payment_amount || 0), 0);
 
-    const filename = `${sanitizeFilename(carpark?.name)}_${sanitizeFilename(account?.company_name)}_${monthName}_${y}_invoice.pdf`;
+    const invNo = accountInvoiceNumber(y, m, account.id);
+    const filename = `${sanitizeFilename(carpark?.name)}_${sanitizeFilename(account?.company_name)}_${invNo}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
 
-    buildAccountInvoicePDF({ res, carpark: carpark || {}, account, invoices, total, monthName, year: y, dueDateYmd });
+    buildAccountInvoicePDF({ res, carpark: carpark || {}, account, invoices, total, monthName, year: y, month2: m, dueDateYmd });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -369,12 +387,13 @@ router.post('/send-accounts', requireAuth, async (req, res) => {
         continue;
       }
 
-      const html = buildAccountEmailHTML(carpark, g.account, invoices, total, monthName, y, dueDateYmd);
+      const html = buildAccountEmailHTML(carpark, g.account, invoices, total, monthName, y, m, dueDateYmd);
       try {
+        const invNo = accountInvoiceNumber(y, m, g.account.id);
         await transporter.sendMail({
           from: emailFrom(),
           to: emailTo,
-          subject: `${carpark.name} – GST – ${monthName} ${y} Account Invoice`,
+          subject: `${carpark.name} – GST – ${monthName} ${y} Account Invoice (${invNo})`,
           html,
         });
         results.push({ account: g.account.company_name, status: 'sent', email: emailTo, total });

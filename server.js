@@ -183,11 +183,14 @@ async function runMonthEndEmailJob({ force = false, includeAccounts = true, incl
             ? `<p><a href="${account.payment_link}" style="background:#27ae60;color:#fff;padding:10px 20px;border-radius:5px;text-decoration:none;">Pay Online</a></p>`
             : '';
 
-          const bank = [
+        const invNo = `ACC-${year}${m}-${account.id}`;
+        const ref = invNo;
+        const bank = [
             carpark.bank_name ? `<p><strong>Bank:</strong> ${carpark.bank_name}</p>` : '',
             carpark.bank_account_name ? `<p><strong>Account name:</strong> ${carpark.bank_account_name}</p>` : '',
             carpark.bank_account_number ? `<p><strong>Account number:</strong> ${carpark.bank_account_number}</p>` : '',
-            carpark.bank_reference ? `<p><strong>Reference:</strong> ${carpark.bank_reference} — ${account.company_name}</p>` : `<p><strong>Reference:</strong> ${account.company_name}</p>`,
+          `<p><strong>Invoice #:</strong> ${invNo}</p>`,
+          `<p><strong>Reference:</strong> ${ref}</p>`,
           ].join('');
 
           const html = `<!DOCTYPE html><html><body style="font-family:Arial;max-width:700px;margin:0 auto;padding:20px;">
@@ -206,7 +209,7 @@ async function runMonthEndEmailJob({ force = false, includeAccounts = true, incl
             await transporter.sendMail({
               from: process.env.EMAIL_FROM || `BOI Car Storage <boicarparkkerikeri@gmail.com>`,
               to:   emailTo,
-              subject: `${carpark.name} - GST - ${monthName} ${year} Account Invoice`,
+            subject: `${carpark.name} - GST - ${monthName} ${year} Account Invoice (${invNo})`,
               html
             });
             await db.prepare(`INSERT INTO email_logs
