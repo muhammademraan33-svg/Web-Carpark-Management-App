@@ -213,6 +213,10 @@
               <h4 class="mb-0">${account.company_name}</h4>
               <div>
                 <span class="small text-muted me-2">To: ${account.billing_email || account.email || 'No email'}</span>
+                <button type="button" class="btn btn-sm btn-outline-secondary me-2 btn-download-account-pdf"
+                  data-account-ids="${(account_ids && account_ids.length ? account_ids : [account.id]).join(',')}">
+                  <i class="bi bi-file-earmark-pdf"></i> PDF
+                </button>
                 <input type="checkbox" class="form-check-input account-select-cb"
                   data-account-ids="${(account_ids && account_ids.length ? account_ids : [account.id]).join(',')}" checked>
               </div>
@@ -229,6 +233,18 @@
       });
 
       container.innerHTML = html;
+
+      // PDF per account block (download for manual emailing)
+      document.querySelectorAll('.btn-download-account-pdf').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const ids = btn.dataset.accountIds || '';
+          const mm = document.getElementById('email-month').value;
+          const yy = document.getElementById('email-year').value;
+          if (!ids) { showAlert('No account ids for PDF', 'warning'); return; }
+          const url = `/api/email/account-invoice.pdf?month=${encodeURIComponent(mm)}&year=${encodeURIComponent(yy)}&account_ids=${encodeURIComponent(ids)}`;
+          window.open(url, '_blank');
+        });
+      });
     }
 
     async function sendEmails() {

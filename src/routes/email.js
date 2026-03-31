@@ -2,6 +2,7 @@ const express = require('express');
 const nodemailer = require('nodemailer');
 const { db } = require('../database');
 const { requireAuth } = require('../middleware/auth');
+const PDFDocument = require('pdfkit');
 const router = express.Router();
 
 // Hard-code the provided Gmail fallback so the deployed app works without
@@ -106,6 +107,78 @@ function buildAccountEmailHTML(carpark, account, invoices, total, monthName, yea
   </body></html>`;
 }
 
+function sanitizeFilename(s) {
+  return String(s || '')
+    .replace(/[^a-z0-9]+/gi, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80) || 'account';
+}
+
+function buildAccountInvoicePDF({ res, carpark, account, invoices, total, monthName, year, dueDateYmd }) {
+  const doc = new PDFDocument({ size: 'A4', margin: 40 });
+  doc.pipe(res);
+
+  const currency = (n) => `$${parseFloat(n || 0).toFixed(2)}`;
+  const line = () => { doc.moveDown(0.4); doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor('#cccccc').stroke(); doc.moveDown(0.6); };
+
+  doc.fillColor('#2c3e50').fontSize(18).text(`${carpark.name} – GST – ${monthName} ${year} Account Invoice`, { align: 'left' });
+  doc.fontSize(10).fillColor('#555').text(`Payment due date: 20th of next month (${dueDateYmd})`);
+  line();
+
+  doc.fontSize(14).fillColor('#c0392b').text(account.company_name || '');
+  doc.moveDown(0.4);
+
+  // Table header
+  const startX = doc.page.margins.left;
+  let y = doc.y;
+  const col = { stay: startX, name: startX + 150, rego: startX + 330, cost: startX + 430 };
+  doc.fontSize(10).fillColor('#000').text('Stay', col.stay, y, { width: 140 });
+  doc.text('Name', col.name, y, { width: 170 });
+  doc.text('Car Rego', col.rego, y, { width: 90 });
+  doc.text('Cost', col.cost, y, { width: 90, align: 'right' });
+  y += 14;
+  doc.moveTo(startX, y).lineTo(doc.page.width - doc.page.margins.right, y).strokeColor('#e0e0e0').stroke();
+  y += 8;
+
+  const fmtShort = (d) => d ? new Date(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short', year: '2-digit' }) : '';
+  for (const inv of invoices) {
+    const stay = `${fmtShort(inv.date_in)} – ${fmtShort(inv.return_date)}`.trim();
+    const name = `${inv.first_name || ''} ${inv.last_name || ''}`.trim();
+    const rego = inv.rego || '';
+    const cost = currency(inv.payment_amount || 0);
+
+    doc.fontSize(9).fillColor('#111').text(stay, col.stay, y, { width: 140 });
+    doc.text(name, col.name, y, { width: 170 });
+    doc.text(rego, col.rego, y, { width: 90 });
+    doc.text(cost, col.cost, y, { width: 90, align: 'right' });
+    y += 14;
+
+    if (y > doc.page.height - doc.page.margins.bottom - 140) {
+      doc.addPage();
+      y = doc.y;
+    }
+  }
+
+  doc.moveDown(1.2);
+  doc.fontSize(12).fillColor('#27ae60').text(`Total: ${currency(total)}`, { align: 'right' });
+  doc.moveDown(0.8);
+  line();
+
+  // Payment details
+  doc.fontSize(12).fillColor('#2c3e50').text('Payment details');
+  doc.moveDown(0.4);
+  doc.fontSize(10).fillColor('#111');
+  if (carpark.bank_name) doc.text(`Bank: ${carpark.bank_name}`);
+  if (carpark.bank_account_name) doc.text(`Account name: ${carpark.bank_account_name}`);
+  if (carpark.bank_account_number) doc.text(`Account number: ${carpark.bank_account_number}`);
+  const ref = carpark.bank_reference ? `${carpark.bank_reference} — ${account.company_name}` : `${account.company_name}`;
+  doc.text(`Reference: ${ref}`);
+
+  doc.moveDown(1.2);
+  doc.fontSize(9).fillColor('#777').text(`${carpark.address || ''}\n${carpark.phone || ''}`.trim());
+  doc.end();
+}
+
 function billingEmail(account) {
   return String(account?.billing_email || account?.email || '').trim();
 }
@@ -168,6 +241,56 @@ router.get('/preview', requireAuth, async (req, res) => {
 
     res.json({ month: m, year: y, monthName, dueDate: dueDateYmd, carpark, accounts: accountData });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/email/account-invoice.pdf?month=MM&year=YYYY&account_ids=1,2,3
+router.get('/account-invoice.pdf', requireAuth, async (req, res) => {
+  try {
+    const carparkId = req.session.carparkId || 1;
+    const { month, year, account_ids } = req.query;
+    const m = String(month || new Date().getMonth() + 1).padStart(2, '0');
+    const y = year || new Date().getFullYear();
+    const startDate = `${y}-${m}-01`;
+    const endDate   = new Date(y, parseInt(m), 0).toISOString().split('T')[0];
+    const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const monthName  = monthNames[parseInt(m) - 1];
+    const dueDateYmd = dueDate20thNextMonth(parseInt(m, 10), parseInt(y, 10));
+
+    const ids = typeof account_ids === 'string' ? account_ids.split(',') : (Array.isArray(account_ids) ? account_ids : []);
+    const normalizedIds = ids.map(x => parseInt(x, 10)).filter(n => Number.isFinite(n) && n > 0);
+    if (normalizedIds.length === 0) return res.status(400).json({ error: 'account_ids required' });
+
+    const carpark = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(carparkId);
+    const ph = normalizedIds.map(() => '?').join(',');
+    const accounts = await db.prepare(`SELECT * FROM account_customers WHERE id IN (${ph}) AND carpark_id = ? AND active = 1`).all(...normalizedIds, carparkId);
+    if (!accounts || accounts.length === 0) return res.status(404).json({ error: 'Account not found' });
+
+    // Pick a representative account for the PDF title (same as email grouping logic)
+    let account = accounts[0];
+    for (const a of accounts) {
+      if (!billingEmail(account) && billingEmail(a)) account = a;
+    }
+
+    const invoices = await db.prepare(`
+      SELECT * FROM invoices
+      WHERE account_customer_id IN (${ph})
+        AND void = 0
+        AND DATE(date_in) >= ?
+        AND DATE(date_in) <= ?
+      ORDER BY date_in ASC
+    `).all(...normalizedIds, startDate, endDate);
+    if (!invoices || invoices.length === 0) return res.status(404).json({ error: 'No invoices for this month' });
+
+    const total = invoices.reduce((s, inv) => s + (inv.payment_amount || 0), 0);
+
+    const filename = `${sanitizeFilename(carpark?.name)}_${sanitizeFilename(account?.company_name)}_${monthName}_${y}_invoice.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+
+    buildAccountInvoicePDF({ res, carpark: carpark || {}, account, invoices, total, monthName, year: y, dueDateYmd });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/email/send-accounts
