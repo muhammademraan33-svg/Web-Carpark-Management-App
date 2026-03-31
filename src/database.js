@@ -225,6 +225,7 @@ async function initializeDatabase() {
 
   try { x(`ALTER TABLE longterm_customers ADD COLUMN contract_amount REAL`); } catch (_) {}
   try { x(`ALTER TABLE longterm_customers ADD COLUMN payment_status TEXT DEFAULT 'Unpaid'`); } catch (_) {}
+  try { x(`ALTER TABLE longterm_customers ADD COLUMN contract_start_date DATE`); } catch (_) {}
   try { x(`ALTER TABLE longterm_customers ADD COLUMN lt_key_slot INTEGER`); } catch (_) {}
   try { x(`ALTER TABLE longterm_customers ADD COLUMN lt_in_yard INTEGER DEFAULT 0`); } catch (_) {}
   try { x(`UPDATE longterm_customers SET payment_status = 'Unpaid' WHERE payment_status IS NULL OR payment_status = ''`); } catch (_) {}

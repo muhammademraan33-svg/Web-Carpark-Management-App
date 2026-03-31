@@ -255,7 +255,7 @@ router.post('/:id/keybox', requireAuth, async (req, res) => {
 router.post('/', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
-    const { lt_number, name, rego_1, rego_2, phone, email, rate, rate_period, expiry_date, notes, contract_amount, payment_status } = req.body;
+    const { lt_number, name, rego_1, rego_2, phone, email, rate, rate_period, contract_start_date, expiry_date, notes, contract_amount, payment_status } = req.body;
     const existing = await db.prepare('SELECT id, active FROM longterm_customers WHERE lt_number = ? AND carpark_id = ?').get(lt_number, carparkId);
 
     // If the LT exists but is inactive, reuse the same LT# by reactivating it.
@@ -266,11 +266,12 @@ router.post('/', requireAuth, async (req, res) => {
       await db.prepare(`
         UPDATE longterm_customers
         SET active = 1, name=?, rego_1=?, rego_2=?, phone=?, email=?, rate=?, rate_period=?, expiry_date=?, notes=?,
-            contract_amount=?, payment_status=?
+            contract_start_date=?, contract_amount=?, payment_status=?
         WHERE id = ?
       `).run(
         name, rego_1, rego_2, phone, email,
         normalizedMoney(rate) || 0, rate_period || 'monthly', expiry_date || null, notes,
+        contract_start_date || null,
         contract_amount != null && contract_amount !== '' ? parseFloat(contract_amount) : null,
         payment_status || 'Unpaid',
         existing.id
@@ -282,10 +283,10 @@ router.post('/', requireAuth, async (req, res) => {
 
     const result = await db.prepare(`
       INSERT INTO longterm_customers
-        (lt_number, name, rego_1, rego_2, phone, email, rate, rate_period, expiry_date, notes, carpark_id, contract_amount, payment_status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (lt_number, name, rego_1, rego_2, phone, email, rate, rate_period, contract_start_date, expiry_date, notes, carpark_id, contract_amount, payment_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      lt_number, name, rego_1, rego_2, phone, email, normalizedMoney(rate) || 0, rate_period || 'monthly', expiry_date || null, notes, carparkId,
+      lt_number, name, rego_1, rego_2, phone, email, normalizedMoney(rate) || 0, rate_period || 'monthly', contract_start_date || null, expiry_date || null, notes, carparkId,
       contract_amount != null && contract_amount !== '' ? parseFloat(contract_amount) : null,
       payment_status || 'Unpaid'
     );
@@ -301,7 +302,7 @@ router.put('/:id', requireAuth, async (req, res) => {
       lt_number,
       name, rego_1, rego_2, phone, email,
       rate, rate_period, expiry_date, notes,
-      contract_amount, payment_status
+      contract_start_date, contract_amount, payment_status
     } = req.body;
 
     const carparkId = req.session.carparkId || 1;
@@ -339,13 +340,13 @@ router.put('/:id', requireAuth, async (req, res) => {
       SET
         lt_number = COALESCE(?, lt_number),
         name=?, rego_1=?, rego_2=?, phone=?, email=?,
-        rate=COALESCE(?, rate), rate_period=COALESCE(?, rate_period), expiry_date=?, notes=?,
+        rate=COALESCE(?, rate), rate_period=COALESCE(?, rate_period), contract_start_date=?, expiry_date=?, notes=?,
         contract_amount=?, payment_status=?
       WHERE id = ? AND carpark_id = ?
     `).run(
       req.body.lt_number,
       name, rego_1, rego_2, phone, email,
-      normalizedMoney(rate), rate_period || null, expiry_date || null, notes,
+      normalizedMoney(rate), rate_period || null, contract_start_date || null, expiry_date || null, notes,
       contract_amount != null && contract_amount !== '' ? parseFloat(contract_amount) : null,
       payment_status || 'Unpaid',
       ltId, carparkId

@@ -522,7 +522,7 @@ router.post('/receipt/:invoiceId', requireAuth, async (req, res) => {
 function longTermEmailHTML(carpark, lt, kind) {
   const currency = (n) => `$${parseFloat(n || 0).toFixed(2)}`;
   const gst = longTermGstAmounts(lt);
-  const startDate = lt?.created_at ? fmtYmd(lt.created_at) : '';
+  const startDate = lt?.contract_start_date ? fmtYmd(lt.contract_start_date) : (lt?.created_at ? fmtYmd(lt.created_at) : '');
   const expiryDate = lt?.expiry_date ? fmtYmd(lt.expiry_date) : '';
   const bank = [
     carpark.bank_name ? `<p><strong>Bank:</strong> ${carpark.bank_name}</p>` : '',

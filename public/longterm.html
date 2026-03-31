@@ -105,6 +105,10 @@
               <input type="email" class="form-control" id="lt-email" placeholder="email@example.com">
             </div>
             <div class="col-md-4">
+              <label class="form-label">Contract Start Date</label>
+              <input type="date" class="form-control" id="lt-start-date">
+            </div>
+            <div class="col-md-4">
               <label class="form-label">Expiry Date</label>
               <input type="date" class="form-control" id="lt-expiry">
             </div>
@@ -489,6 +493,8 @@
       document.getElementById('lt-rego2').value = lt.rego_2 || '';
       document.getElementById('lt-phone').value = lt.phone || '';
       document.getElementById('lt-email').value = lt.email || '';
+      const sd = document.getElementById('lt-start-date');
+      if (sd) sd.value = lt.contract_start_date ? String(lt.contract_start_date).slice(0, 10) : '';
       document.getElementById('lt-expiry').value = lt.expiry_date ? lt.expiry_date.split('T')[0] : '';
       document.getElementById('lt-notes').value = lt.notes || '';
       const ca = document.getElementById('lt-contract-amount');
@@ -528,6 +534,8 @@
       document.getElementById('lt-rego2').value = '';
       document.getElementById('lt-phone').value = '';
       document.getElementById('lt-email').value = '';
+      const sd = document.getElementById('lt-start-date');
+      if (sd) sd.value = localDateStr(new Date());
       document.getElementById('lt-key-status').value = 'released';
       // Populate available LT key slots for new customers.
       // Uses lt-id=0 (not matching any existing id) so it filters out used slots correctly.
@@ -639,6 +647,7 @@
         rego_2: document.getElementById('lt-rego2').value,
         phone: document.getElementById('lt-phone').value,
         email: document.getElementById('lt-email').value,
+        contract_start_date: (document.getElementById('lt-start-date')?.value || null),
         expiry_date: document.getElementById('lt-expiry').value || null,
         notes: document.getElementById('lt-notes').value,
         contract_amount: document.getElementById('lt-contract-amount').value || null,
