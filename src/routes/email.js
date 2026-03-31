@@ -120,6 +120,9 @@ function buildAccountInvoicePDF({ res, carpark, account, invoices, total, monthN
 
   const currency = (n) => `$${parseFloat(n || 0).toFixed(2)}`;
   const line = () => { doc.moveDown(0.4); doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor('#cccccc').stroke(); doc.moveDown(0.6); };
+  const left = doc.page.margins.left;
+  const right = doc.page.width - doc.page.margins.right;
+  const fullWidth = right - left;
 
   doc.fillColor('#2c3e50').fontSize(18).text(`${carpark.name} – GST – ${monthName} ${year} Account Invoice`, { align: 'left' });
   doc.fontSize(10).fillColor('#555').text(`Payment due date: 20th of next month (${dueDateYmd})`);
@@ -165,14 +168,20 @@ function buildAccountInvoicePDF({ res, carpark, account, invoices, total, monthN
   line();
 
   // Payment details
-  doc.fontSize(12).fillColor('#2c3e50').text('Payment details');
+  // Anchor to left margin so it never "sticks" on the right after right-aligned totals.
+  doc.x = left;
+  doc.fontSize(12).fillColor('#2c3e50').text('Payment details', left, doc.y, { width: fullWidth, align: 'left' });
   doc.moveDown(0.4);
   doc.fontSize(10).fillColor('#111');
-  if (carpark.bank_name) doc.text(`Bank: ${carpark.bank_name}`);
-  if (carpark.bank_account_name) doc.text(`Account name: ${carpark.bank_account_name}`);
-  if (carpark.bank_account_number) doc.text(`Account number: ${carpark.bank_account_number}`);
   const ref = carpark.bank_reference ? `${carpark.bank_reference} — ${account.company_name}` : `${account.company_name}`;
-  doc.text(`Reference: ${ref}`);
+  const rows = [
+    carpark.bank_name ? `Bank: ${carpark.bank_name}` : null,
+    carpark.bank_account_name ? `Account name: ${carpark.bank_account_name}` : null,
+    carpark.bank_account_number ? `Account number: ${carpark.bank_account_number}` : null,
+    `Reference: ${ref}`,
+  ].filter(Boolean);
+  // Render full-width, left aligned (wraps naturally across the page).
+  rows.forEach(r => doc.text(r, left, doc.y, { width: fullWidth, align: 'left' }));
 
   doc.moveDown(1.2);
   doc.fontSize(9).fillColor('#777').text(`${carpark.address || ''}\n${carpark.phone || ''}`.trim());
