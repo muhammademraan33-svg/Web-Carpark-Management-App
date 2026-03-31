@@ -149,6 +149,28 @@ function calcNights(dateIn, dateOut) {
   return diffDays <= 0 ? 1 : diffDays;
 }
 
+// True 24-hour billing when times are provided.
+// - If both times exist, charge = ceil(diffMs / 24h), min 1
+// - If times missing, fall back to date-based calcNights
+function calcNights24h(dateIn, timeIn, dateOut, timeOut) {
+  if (!dateIn || !dateOut) return 0;
+  const tin = String(timeIn || '').trim();
+  const tout = String(timeOut || '').trim();
+  const hasTimes = /^\d{1,2}:\d{2}$/.test(tin) && /^\d{1,2}:\d{2}$/.test(tout);
+  if (!hasTimes) return calcNights(dateIn, dateOut);
+  const [y1, m1, d1] = String(dateIn).slice(0, 10).split('-').map(Number);
+  const [y2, m2, d2] = String(dateOut).slice(0, 10).split('-').map(Number);
+  const [hh1, mm1] = tin.split(':').map(Number);
+  const [hh2, mm2] = tout.split(':').map(Number);
+  if (![y1, m1, d1, y2, m2, d2, hh1, mm1, hh2, mm2].every(Number.isFinite)) return calcNights(dateIn, dateOut);
+  const t1 = Date.UTC(y1, m1 - 1, d1, hh1, mm1);
+  const t2 = Date.UTC(y2, m2 - 1, d2, hh2, mm2);
+  const diffMs = t2 - t1;
+  if (diffMs <= 0) return 1;
+  const dayMs = 24 * 60 * 60 * 1000;
+  return Math.max(1, Math.ceil(diffMs / dayMs));
+}
+
 // Get month name
 function monthName(num) {
   const names = ['January','February','March','April','May','June','July','August','September','October','November','December'];

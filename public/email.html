@@ -53,7 +53,7 @@
         <div class="col-md-4">
           <div class="mt-4">
             <button class="btn btn-success btn-lg" id="btn-send-all">
-              <i class="bi bi-send-fill me-2"></i>Send Accounts Email For Selected Date
+              <i class="bi bi-send-fill me-2"></i>Send Account Invoices (Selected)
             </button>
           </div>
         </div>
@@ -193,7 +193,7 @@
           <h3 style="color: #2c3e50; font-style: italic;">
             <i class="bi bi-building me-2"></i>${data.carpark.name} - ${data.monthName} ${data.year} Accounts
           </h3>
-          <p class="text-muted mb-0">Preview of monthly account statements to be emailed. Payment due date: 20th of next month (${data.dueDate || 'N/A'}).</p>
+          <p class="text-muted mb-0">Preview of monthly account invoices to be emailed. Payment due date: 20th of next month (${data.dueDate || 'N/A'}).</p>
         </div>
       `;
 
@@ -249,7 +249,12 @@
       });
       const selected = Array.from(selectedSet);
 
-      if (!confirm(`Send account statements for ${monthName(month)} ${year}${selected.length > 0 ? ` to ${selected.length} selected accounts` : ' to ALL accounts'}?`)) return;
+      if (selected.length === 0) {
+        showAlert('Select at least one account to send', 'warning');
+        return;
+      }
+
+      if (!confirm(`Send account invoices for ${monthName(month)} ${year} to ${selected.length} selected account(s)?`)) return;
 
       const btn = document.getElementById('btn-send-all');
       btn.disabled = true;
@@ -258,11 +263,11 @@
       const res = await fetch('/api/email/send-accounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ month, year, account_ids: selected.length > 0 ? selected : [] })
+        body: JSON.stringify({ month, year, account_ids: selected })
       });
 
       btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-send-fill me-2"></i>Send Accounts Email For Selected Date';
+      btn.innerHTML = '<i class="bi bi-send-fill me-2"></i>Send Account Invoices (Selected)';
 
       if (!res.ok) {
         showAlert('Error sending emails', 'danger');

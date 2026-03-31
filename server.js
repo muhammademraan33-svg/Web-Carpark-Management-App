@@ -182,8 +182,15 @@ async function runMonthEndEmailJob({ force = false } = {}) {
           ? `<p><a href="${account.payment_link}" style="background:#27ae60;color:#fff;padding:10px 20px;border-radius:5px;text-decoration:none;">Pay Online</a></p>`
           : '';
 
+        const bank = [
+          carpark.bank_name ? `<p><strong>Bank:</strong> ${carpark.bank_name}</p>` : '',
+          carpark.bank_account_name ? `<p><strong>Account name:</strong> ${carpark.bank_account_name}</p>` : '',
+          carpark.bank_account_number ? `<p><strong>Account number:</strong> ${carpark.bank_account_number}</p>` : '',
+          carpark.bank_reference ? `<p><strong>Reference:</strong> ${carpark.bank_reference} — ${account.company_name}</p>` : `<p><strong>Reference:</strong> ${account.company_name}</p>`,
+        ].join('');
+
         const html = `<!DOCTYPE html><html><body style="font-family:Arial;max-width:700px;margin:0 auto;padding:20px;">
-          <h2 style="color:#2c3e50;font-style:italic;">${carpark.name} - ${monthName} ${year} Accounts</h2><hr>
+          <h2 style="color:#2c3e50;font-style:italic;">${carpark.name} - GST - ${monthName} ${year} Account Invoice</h2><hr>
           <h3 style="color:#e74c3c;">${account.company_name}</h3>
           <table border="1" cellpadding="8" cellspacing="0" width="100%">
             <tr><th>Stay</th><th>Name</th><th>Car Rego</th><th>Cost</th></tr>${rows}
@@ -191,13 +198,14 @@ async function runMonthEndEmailJob({ force = false } = {}) {
           <p><strong>Total: <span style="color:#27ae60;">$${parseFloat(total).toFixed(2)}</span></strong></p>
           <p><strong>Payment due date:</strong> 20th of next month (${dueDateYmd})</p>
           ${paymentLink}
+          ${bank ? `<hr><h3 style="color:#2c3e50;font-size:15px;">Payment details</h3>${bank}` : ''}
         </body></html>`;
 
         try {
           await transporter.sendMail({
             from: process.env.EMAIL_FROM || `BOI Car Storage <boicarparkkerikeri@gmail.com>`,
             to:   emailTo,
-            subject: `${carpark.name} - ${monthName} ${year} Account Statement`,
+            subject: `${carpark.name} - GST - ${monthName} ${year} Account Invoice`,
             html
           });
           await db.prepare(`INSERT INTO email_logs
@@ -214,7 +222,7 @@ async function runMonthEndEmailJob({ force = false } = {}) {
         }
       }
 
-      // Monthly Long-term payment requests (default monthly plan: $200 ex GST)
+      // Monthly Long-term invoices (default monthly plan: $200 ex GST)
       const ltCustomers = await db.prepare('SELECT * FROM longterm_customers WHERE carpark_id = ? AND active = 1').all(carpark.id);
       for (const lt of ltCustomers) {
         const emailTo = String(lt.email || '').trim();
@@ -225,19 +233,19 @@ async function runMonthEndEmailJob({ force = false } = {}) {
         const html = `<!DOCTYPE html><html><body style="font-family:Arial;max-width:700px;margin:0 auto;padding:20px;">
           <h2 style="color:#2c3e50;font-style:italic;">${carpark.name} - Long-term Monthly Payment</h2><hr>
           <p>Hi ${lt.name || ''},</p>
-          <p>This is your monthly long-term storage statement for <strong>${monthName} ${year}</strong>.</p>
+          <p>This is your monthly long-term storage invoice for <strong>${monthName} ${year}</strong>.</p>
           <table border="1" cellpadding="8" cellspacing="0" width="100%">
             <tr><th>Plan</th><th>Amount ex GST</th><th>GST (15%)</th><th>Total</th></tr>
             <tr><td>Monthly</td><td>$${baseExGst.toFixed(2)}</td><td>$${gstAmt.toFixed(2)}</td><td><strong>$${total.toFixed(2)}</strong></td></tr>
           </table>
-          <p><strong>Payment due date:</strong> 20th of next month (${dueDateYmd})</p>
+          <p><strong>Payment due:</strong> by the 20th (${dueDateYmd})</p>
           <p style="color:#666;">Reference: ${lt.lt_number || ''}</p>
         </body></html>`;
         try {
           await transporter.sendMail({
             from: process.env.EMAIL_FROM || `BOI Car Storage <boicarparkkerikeri@gmail.com>`,
             to: emailTo,
-            subject: `${carpark.name} - Long-term Monthly Statement (${monthName} ${year})`,
+            subject: `${carpark.name} - Long-term Monthly Invoice (${monthName} ${year})`,
             html
           });
         } catch (err) {

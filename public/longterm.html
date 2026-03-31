@@ -223,13 +223,13 @@
   <script src="/js/common.js"></script>
   <script>
     document.getElementById('navbar-container').innerHTML = renderNavbar('longterm');
+    // Agreed long-term pricing schedule (ex GST)
+    // Monthly: $200.00
+    // 3 Months: $500.00
+    // 6 Months: $1000.00
+    // Annual: $1650.00
     const LT_MONTHLY_RATE = 200.00;
-    const LT_TERM_TOTALS = {
-      1: LT_MONTHLY_RATE * 1,
-      3: LT_MONTHLY_RATE * 3,
-      6: LT_MONTHLY_RATE * 6,
-      12: LT_MONTHLY_RATE * 12
-    };
+    const LT_TERM_TOTALS = { 1: 200.00, 3: 500.00, 6: 1000.00, 12: 1650.00 };
 
     function addMonthsYmd(ymd, months) {
       const base = ymd ? new Date(`${ymd}T00:00:00`) : new Date();

@@ -295,7 +295,9 @@ function updateNightsAndDisplay() {
   const dateIn = document.getElementById('inv-date-in').value;
   const returnDate = document.getElementById('inv-return-date').value;
   const timeIn = document.getElementById('inv-time-in').value;
-  const nights = calcNights(dateIn, returnDate);
+  const returnTimeEl = document.getElementById('inv-return-time');
+  const returnTime = returnTimeEl ? returnTimeEl.value : '';
+  const nights = calcNights24h(dateIn, timeIn, returnDate, returnTime);
   document.getElementById('inv-nights').value = nights;
   document.getElementById('date-in-display').textContent = dateIn ? formatDate(dateIn) : 'Not set';
   document.getElementById('time-in-display').textContent = timeIn || '--:--';
@@ -827,7 +829,9 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
     stay_nights: (() => {
       const dateIn = document.getElementById('inv-date-in').value;
       const returnDate = document.getElementById('inv-return-time-tbc').checked ? null : document.getElementById('inv-return-date').value;
-      if (dateIn && returnDate) return calcNights(dateIn, returnDate);
+                  const timeIn = document.getElementById('inv-time-in').value;
+                  const returnTime = document.getElementById('inv-return-time-tbc').checked ? null : document.getElementById('inv-return-time').value;
+                  if (dateIn && returnDate) return calcNights24h(dateIn, timeIn, returnDate, returnTime);
       return parseInt(document.getElementById('inv-nights').value, 10) || 0;
     })(),
     flight_info: document.getElementById('inv-flight-info').value,

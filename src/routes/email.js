@@ -73,9 +73,18 @@ function buildAccountEmailHTML(carpark, account, invoices, total, monthName, yea
     ? `<p><a href="${account.payment_link}" style="background:#27ae60;color:#fff;padding:10px 20px;border-radius:5px;text-decoration:none;display:inline-block;margin-top:10px;">Pay Online</a></p>`
     : '';
 
+  const bank = [
+    carpark.bank_name ? `<p><strong>Bank:</strong> ${carpark.bank_name}</p>` : '',
+    carpark.bank_account_name ? `<p><strong>Account name:</strong> ${carpark.bank_account_name}</p>` : '',
+    carpark.bank_account_number ? `<p><strong>Account number:</strong> ${carpark.bank_account_number}</p>` : '',
+    carpark.bank_reference
+      ? `<p><strong>Reference:</strong> ${carpark.bank_reference} — ${account.company_name}</p>`
+      : `<p><strong>Reference:</strong> ${account.company_name}</p>`,
+  ].join('');
+
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
   <body style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto;padding:20px;color:#333;">
-    <h2 style="color:#2c3e50;font-style:italic;">${carpark.name} – ${monthName} ${year} Accounts</h2>
+    <h2 style="color:#2c3e50;font-style:italic;">${carpark.name} – GST – ${monthName} ${year} Account Invoice</h2>
     <hr style="border:2px solid #3498db;">
     <h3 style="color:#e74c3c;">${account.company_name}</h3>
     <table style="width:100%;border-collapse:collapse;margin-top:10px;">
@@ -90,9 +99,10 @@ function buildAccountEmailHTML(carpark, account, invoices, total, monthName, yea
     <p style="margin-top:10px;"><strong>Total: <span style="color:#27ae60;">$${parseFloat(total).toFixed(2)}</span></strong></p>
     <p style="margin-top:4px;"><strong>Payment due date:</strong> 20th of next month (${dueDateYmd})</p>
     ${payLink}
+    ${bank ? `<hr style="margin-top:22px;"><h3 style="color:#2c3e50;font-size:15px;">Payment details</h3>${bank}` : ''}
     <hr style="margin-top:30px;">
     <p style="color:#7f8c8d;font-size:12px;">${carpark.name}<br>${carpark.address || ''}<br>${carpark.phone || ''}<br>
-    <em>This is an automated statement. Please contact us if you have any queries.</em></p>
+    <em>This is an automated invoice. Please contact us if you have any queries.</em></p>
   </body></html>`;
 }
 
@@ -175,12 +185,15 @@ router.post('/send-accounts', requireAuth, async (req, res) => {
     const carpark    = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(carparkId);
 
     let accounts;
-    if (account_ids && account_ids.length > 0) {
-      const ph = account_ids.map(() => '?').join(',');
-      accounts = await db.prepare(`SELECT * FROM account_customers WHERE id IN (${ph}) AND carpark_id = ? AND active = 1`).all(...account_ids, carparkId);
-    } else {
-      accounts = await db.prepare('SELECT * FROM account_customers WHERE carpark_id = ? AND active = 1').all(carparkId);
+    const ids = Array.isArray(account_ids)
+      ? account_ids
+      : (typeof account_ids === 'string' ? account_ids.split(',') : []);
+    const normalizedIds = ids.map(x => parseInt(x, 10)).filter(n => Number.isFinite(n) && n > 0);
+    if (normalizedIds.length === 0) {
+      return res.status(400).json({ error: 'Select at least one account to send' });
     }
+    const ph = normalizedIds.map(() => '?').join(',');
+    accounts = await db.prepare(`SELECT * FROM account_customers WHERE id IN (${ph}) AND carpark_id = ? AND active = 1`).all(...normalizedIds, carparkId);
 
     const transporter = getTransporter();
     const results = [];
@@ -229,7 +242,7 @@ router.post('/send-accounts', requireAuth, async (req, res) => {
         await transporter.sendMail({
           from: emailFrom(),
           to: emailTo,
-          subject: `${carpark.name} – ${monthName} ${y} Account Statement`,
+          subject: `${carpark.name} – GST – ${monthName} ${y} Account Invoice`,
           html,
         });
         results.push({ account: g.account.company_name, status: 'sent', email: emailTo, total });
@@ -403,8 +416,7 @@ function longTermEmailHTML(carpark, lt, kind) {
   <h2 style="color:#2c3e50;">${carpark.name} – Long-term payment due</h2>
   <p>Hi ${lt.name},</p>
   <p>Please arrange payment for your long-term storage contract <strong>${lt.lt_number}</strong>.</p>
-  <p><strong>Monthly plan:</strong> $${LONGTERM_MONTHLY_DEFAULT.toFixed(2)} ex GST (GST added below).</p>
-  <p><strong>Payment due date:</strong> 20th of next month (${dueDateYmd}).</p>
+  <p><strong>Payment due:</strong> by the 20th (${dueDateYmd}).</p>
   <table style="width:100%;border-collapse:collapse;margin:16px 0;background:#f8f9fa;border-radius:8px;">
     <tr><td style="padding:12px;"><strong>Amount due</strong></td><td style="padding:12px;text-align:right;font-size:18px;color:#c0392b;">${currency(gst.total)}</td></tr>
     <tr><td style="padding:12px;border-top:1px solid #dee2e6;">Amount ex GST</td><td style="padding:12px;border-top:1px solid #dee2e6;text-align:right;">${currency(gst.base)}</td></tr>

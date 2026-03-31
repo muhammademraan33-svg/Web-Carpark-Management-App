@@ -5,12 +5,29 @@ const { releaseKey, syncKeyBoxForPickedUp } = require('../utils/keyBoxSync');
 const PDFDocument = require('pdfkit');
 const router = express.Router();
 
-function deriveStayNights24h(dateIn, returnDate, fallback = 0) {
+function deriveStayNights24h(dateIn, timeIn, returnDate, returnTime, fallback = 0) {
   const f = parseInt(fallback, 10);
   if (!dateIn || !returnDate) return Number.isFinite(f) ? f : 0;
   const [y1, m1, d1] = String(dateIn).slice(0, 10).split('-').map(Number);
   const [y2, m2, d2] = String(returnDate).slice(0, 10).split('-').map(Number);
   if (![y1, m1, d1, y2, m2, d2].every(Number.isFinite)) return Number.isFinite(f) ? f : 0;
+
+  const tin = String(timeIn || '').trim();
+  const tout = String(returnTime || '').trim();
+  const hasTimes = /^\d{1,2}:\d{2}$/.test(tin) && /^\d{1,2}:\d{2}$/.test(tout);
+  if (hasTimes) {
+    const [hh1, mm1] = tin.split(':').map(Number);
+    const [hh2, mm2] = tout.split(':').map(Number);
+    if (![hh1, mm1, hh2, mm2].every(Number.isFinite)) return Number.isFinite(f) ? f : 0;
+    const t1 = Date.UTC(y1, m1 - 1, d1, hh1, mm1);
+    const t2 = Date.UTC(y2, m2 - 1, d2, hh2, mm2);
+    const diffMs = t2 - t1;
+    if (diffMs <= 0) return 1;
+    const dayMs = 24 * 60 * 60 * 1000;
+    return Math.max(1, Math.ceil(diffMs / dayMs));
+  }
+
+  // Fallback: date-based (previous behavior)
   const t1 = Date.UTC(y1, m1 - 1, d1);
   const t2 = Date.UTC(y2, m2 - 1, d2);
   const diffDays = Math.round((t2 - t1) / (1000 * 60 * 60 * 24));
@@ -208,7 +225,7 @@ router.post('/', requireAuth, async (req, res) => {
     if (existing) return res.status(400).json({ error: 'Invoice number already exists' });
 
     const finalPickedUp = picked_up || 'Car In Yard';
-    const computedStayNights = deriveStayNights24h(date_in, return_date, stay_nights);
+    const computedStayNights = deriveStayNights24h(date_in, time_in, return_date, return_time, stay_nights);
 
     const result = await db.prepare(`
       INSERT INTO invoices (
@@ -261,7 +278,7 @@ router.put('/:id', requireAuth, async (req, res) => {
     }
 
     const finalPickedUp = picked_up || 'Car In Yard';
-    const computedStayNights = deriveStayNights24h(date_in, return_date, stay_nights);
+    const computedStayNights = deriveStayNights24h(date_in, time_in, return_date, return_time, stay_nights);
 
     await db.prepare(`
       UPDATE invoices SET
