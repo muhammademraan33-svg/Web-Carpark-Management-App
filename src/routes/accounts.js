@@ -31,7 +31,47 @@ router.get('/:id/statement', requireAuth, async (req, res) => {
     const endDate = new Date(y, parseInt(m), 0).toISOString().split('T')[0];
     const invoices = await db.prepare(`SELECT * FROM invoices WHERE account_customer_id = ? AND void = 0 AND DATE(date_in) >= ? AND DATE(date_in) <= ? ORDER BY date_in ASC`).all(req.params.id, startDate, endDate);
     const total = invoices.reduce((sum, inv) => sum + (inv.payment_amount || 0), 0);
-    res.json({ account, invoices, total, month: m, year: y, startDate, endDate });
+    const payments = await db.prepare(`
+      SELECT * FROM account_payments
+      WHERE carpark_id = ? AND account_customer_id = ?
+        AND DATE(payment_date) >= ? AND DATE(payment_date) <= ?
+      ORDER BY payment_date DESC, id DESC
+    `).all(carparkId, req.params.id, startDate, endDate);
+    const paid = payments.reduce((s, p) => s + (p.amount || 0), 0);
+    const outstanding = Math.max(0, (total || 0) - paid);
+    res.json({ account, invoices, total, month: m, year: y, startDate, endDate, payments, paid, outstanding });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.get('/:id/payments', requireAuth, async (req, res) => {
+  try {
+    const carparkId = req.session.carparkId || 1;
+    const { from, to } = req.query;
+    const today = new Date().toISOString().split('T')[0];
+    const fromDate = from || new Date(new Date().setDate(1)).toISOString().split('T')[0];
+    const toDate   = to || today;
+    const payments = await db.prepare(`
+      SELECT * FROM account_payments
+      WHERE carpark_id = ? AND account_customer_id = ?
+        AND DATE(payment_date) >= ? AND DATE(payment_date) <= ?
+      ORDER BY payment_date DESC, id DESC
+    `).all(carparkId, req.params.id, fromDate, toDate);
+    res.json({ payments, fromDate, toDate });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/:id/payments', requireAuth, async (req, res) => {
+  try {
+    const carparkId = req.session.carparkId || 1;
+    const { payment_date, amount, payment_method, transaction_reference, notes } = req.body || {};
+    const amt = parseFloat(amount);
+    if (!payment_date) return res.status(400).json({ error: 'payment_date is required' });
+    if (!Number.isFinite(amt) || amt <= 0) return res.status(400).json({ error: 'amount must be > 0' });
+    await db.prepare(`
+      INSERT INTO account_payments (carpark_id, account_customer_id, payment_date, amount, payment_method, transaction_reference, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(carparkId, req.params.id, payment_date, amt, payment_method || null, transaction_reference || null, notes || null);
+    res.status(201).json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

@@ -60,6 +60,12 @@
             </div>
           </div>
           <div class="col-md-3">
+            <div class="stat-card">
+              <div class="stat-value" id="rev-longterm">$0</div>
+              <div class="stat-label">Long Term</div>
+            </div>
+          </div>
+          <div class="col-md-3">
             <div class="stat-card info">
               <div class="stat-value" id="rev-eftpos">$0</div>
               <div class="stat-label">Eftpos</div>
@@ -210,6 +216,7 @@
       const data = await res.json();
 
       document.getElementById('rev-total').textContent = formatCurrency(data.summary.total_revenue);
+      document.getElementById('rev-longterm').textContent = formatCurrency(data.summary.longterm_total || 0);
       document.getElementById('rev-eftpos').textContent = formatCurrency(data.summary.eftpos_total);
       document.getElementById('rev-cash').textContent = formatCurrency(data.summary.cash_total);
       document.getElementById('rev-account').textContent = formatCurrency(data.summary.on_account_total);

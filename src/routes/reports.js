@@ -11,11 +11,13 @@ router.get('/revenue', requireAuth, async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const fromDate = from || new Date(new Date().setDate(1)).toISOString().split('T')[0];
     const toDate   = to || today;
-    let groupExpr = "DATE(date_in)";
-    if (group_by === 'week')  groupExpr = "strftime('%Y-W%W', date_in)";
-    else if (group_by === 'month') groupExpr = "strftime('%Y-%m', date_in)";
-    const revenue = await db.prepare(`
-      SELECT ${groupExpr} as period, COUNT(*) as invoices,
+    let groupExprInv = "DATE(date_in)";
+    let groupExprLt  = "DATE(payment_date)";
+    if (group_by === 'week')  { groupExprInv = "strftime('%Y-W%W', date_in)"; groupExprLt = "strftime('%Y-W%W', payment_date)"; }
+    else if (group_by === 'month') { groupExprInv = "strftime('%Y-%m', date_in)"; groupExprLt = "strftime('%Y-%m', payment_date)"; }
+
+    const invRevenue = await db.prepare(`
+      SELECT ${groupExprInv} as period, COUNT(*) as invoices,
         COALESCE(SUM(payment_amount + payment_amount_2), 0) as total,
         COALESCE(SUM(CASE WHEN paid_status = 'Eftpos' THEN payment_amount ELSE 0 END), 0) as eftpos,
         COALESCE(SUM(CASE WHEN paid_status = 'Cash' THEN payment_amount ELSE 0 END), 0) as cash,
@@ -23,9 +25,30 @@ router.get('/revenue', requireAuth, async (req, res) => {
         COALESCE(SUM(CASE WHEN paid_status = 'To Pay' THEN total_price ELSE 0 END), 0) as outstanding
       FROM invoices WHERE carpark_id = ? AND void = 0
       AND DATE(date_in) >= ? AND DATE(date_in) <= ?
-      GROUP BY ${groupExpr} ORDER BY period DESC
+      GROUP BY ${groupExprInv} ORDER BY period DESC
     `).all(carparkId, fromDate, toDate);
-    const summary = await db.prepare(`
+
+    // Long-term payments: stored ex GST; reports display inc GST to match invoice revenue fields.
+    const ltRevenue = await db.prepare(`
+      SELECT ${groupExprLt} as period, COUNT(*) as lt_payments,
+        COALESCE(SUM(amount_ex_gst * 1.15), 0) as longterm_total
+      FROM longterm_payments
+      WHERE carpark_id = ?
+        AND DATE(payment_date) >= ? AND DATE(payment_date) <= ?
+      GROUP BY ${groupExprLt} ORDER BY period DESC
+    `).all(carparkId, fromDate, toDate);
+
+    const byPeriod = new Map();
+    for (const r of invRevenue) byPeriod.set(r.period, { ...r, longterm: 0 });
+    for (const r of ltRevenue) {
+      const existing = byPeriod.get(r.period) || { period: r.period, invoices: 0, total: 0, eftpos: 0, cash: 0, on_account: 0, outstanding: 0, longterm: 0 };
+      existing.longterm = (existing.longterm || 0) + (r.longterm_total || 0);
+      existing.total = (existing.total || 0) + (r.longterm_total || 0);
+      byPeriod.set(r.period, existing);
+    }
+    const revenue = Array.from(byPeriod.values()).sort((a, b) => String(b.period).localeCompare(String(a.period)));
+
+    const invSummary = await db.prepare(`
       SELECT COUNT(*) as total_invoices,
         COALESCE(SUM(payment_amount + payment_amount_2), 0) as total_revenue,
         COALESCE(SUM(CASE WHEN paid_status = 'Eftpos' THEN payment_amount ELSE 0 END), 0) as eftpos_total,
@@ -35,6 +58,20 @@ router.get('/revenue', requireAuth, async (req, res) => {
       FROM invoices WHERE carpark_id = ? AND void = 0
       AND DATE(date_in) >= ? AND DATE(date_in) <= ?
     `).get(carparkId, fromDate, toDate);
+
+    const ltSummary = await db.prepare(`
+      SELECT COUNT(*) as lt_payments,
+        COALESCE(SUM(amount_ex_gst * 1.15), 0) as longterm_total
+      FROM longterm_payments
+      WHERE carpark_id = ?
+        AND DATE(payment_date) >= ? AND DATE(payment_date) <= ?
+    `).get(carparkId, fromDate, toDate);
+
+    const summary = {
+      ...invSummary,
+      longterm_total: ltSummary.longterm_total || 0,
+      total_revenue: (invSummary.total_revenue || 0) + (ltSummary.longterm_total || 0),
+    };
     res.json({ revenue, summary, fromDate, toDate });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -104,12 +141,27 @@ router.get('/revenue/csv', requireAuth, async (req, res) => {
       AND DATE(i.date_in) >= ? AND DATE(i.date_in) <= ?
       ORDER BY i.date_in ASC
     `).all(carparkId, fromDate, toDate);
+    const ltPayments = await db.prepare(`
+      SELECT p.payment_date, p.amount_ex_gst, p.payment_method, p.transaction_reference,
+             lt.lt_number, lt.name
+      FROM longterm_payments p
+      JOIN longterm_customers lt ON lt.id = p.longterm_customer_id
+      WHERE p.carpark_id = ?
+        AND DATE(p.payment_date) >= ? AND DATE(p.payment_date) <= ?
+      ORDER BY p.payment_date ASC
+    `).all(carparkId, fromDate, toDate);
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="revenue-${fromDate}-to-${toDate}.csv"`);
     const header = 'Invoice,Date In,Return Date,Nights,Customer,Rego,Total Price,Status,Payment 1,Payment 2,Account,Staff\n';
-    const rows = invoices.map(i =>
+    const invRows = invoices.map(i =>
       `${i.invoice_number},"${i.date_in}","${i.return_date || ''}",${i.stay_nights},"${i.customer_name}","${i.rego || ''}",${i.total_price},${i.paid_status},${i.payment_amount},${i.payment_amount_2},"${i.account}","${i.staff || ''}"`
     ).join('\n');
+    const ltRows = ltPayments.map(p => {
+      const inc = (parseFloat(p.amount_ex_gst || 0) * 1.15);
+      const cust = `${p.lt_number || ''} ${p.name || ''}`.trim();
+      return `LT-PAY,"${p.payment_date}","",,"${cust}","",${inc.toFixed(2)},LongTerm,${inc.toFixed(2)},0.00,"","${p.payment_method || ''}${p.transaction_reference ? ` (${p.transaction_reference})` : ''}"`;
+    }).join('\n');
+    const rows = [invRows, ltRows].filter(Boolean).join('\n');
     res.send(header + rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -121,18 +173,43 @@ router.get('/revenue/pdf', requireAuth, async (req, res) => {
     const fromDate = from || new Date(new Date().setDate(1)).toISOString().split('T')[0];
     const toDate   = to || new Date().toISOString().split('T')[0];
     const carpark  = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(carparkId);
-    const summary  = await db.prepare(`
+    const invSummary  = await db.prepare(`
       SELECT COUNT(*) as total_invoices, COALESCE(SUM(payment_amount + payment_amount_2), 0) as total_revenue,
         COALESCE(SUM(CASE WHEN paid_status='Eftpos' THEN payment_amount ELSE 0 END), 0) as eftpos,
         COALESCE(SUM(CASE WHEN paid_status='Cash' THEN payment_amount ELSE 0 END), 0) as cash,
         COALESCE(SUM(CASE WHEN paid_status='OnAcc' THEN payment_amount ELSE 0 END), 0) as on_account
       FROM invoices WHERE carpark_id = ? AND void = 0 AND DATE(date_in) >= ? AND DATE(date_in) <= ?
     `).get(carparkId, fromDate, toDate);
+    const ltSummary = await db.prepare(`
+      SELECT COUNT(*) as lt_payments, COALESCE(SUM(amount_ex_gst * 1.15), 0) as longterm_total
+      FROM longterm_payments
+      WHERE carpark_id = ? AND DATE(payment_date) >= ? AND DATE(payment_date) <= ?
+    `).get(carparkId, fromDate, toDate);
+    const summary = {
+      ...invSummary,
+      longterm_total: ltSummary.longterm_total || 0,
+      total_revenue: (invSummary.total_revenue || 0) + (ltSummary.longterm_total || 0),
+    };
     const dailyRevenue = await db.prepare(`
       SELECT DATE(date_in) as date, COUNT(*) as count, COALESCE(SUM(payment_amount + payment_amount_2), 0) as total
       FROM invoices WHERE carpark_id = ? AND void = 0 AND DATE(date_in) >= ? AND DATE(date_in) <= ?
       GROUP BY DATE(date_in) ORDER BY date ASC
     `).all(carparkId, fromDate, toDate);
+    const dailyLt = await db.prepare(`
+      SELECT DATE(payment_date) as date, COUNT(*) as count, COALESCE(SUM(amount_ex_gst * 1.15), 0) as total
+      FROM longterm_payments
+      WHERE carpark_id = ? AND DATE(payment_date) >= ? AND DATE(payment_date) <= ?
+      GROUP BY DATE(payment_date) ORDER BY date ASC
+    `).all(carparkId, fromDate, toDate);
+    const byDay = new Map();
+    dailyRevenue.forEach(r => byDay.set(r.date, { date: r.date, count: r.count || 0, total: r.total || 0 }));
+    dailyLt.forEach(r => {
+      const ex = byDay.get(r.date) || { date: r.date, count: 0, total: 0 };
+      ex.count = (ex.count || 0) + 0; // keep "invoices" count unchanged in PDF; totals include LT
+      ex.total = (ex.total || 0) + (r.total || 0);
+      byDay.set(r.date, ex);
+    });
+    const dailyCombined = Array.from(byDay.values()).sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="revenue-report-${fromDate}.pdf"`);
@@ -148,6 +225,7 @@ router.get('/revenue/pdf', requireAuth, async (req, res) => {
     doc.text(`Eftpos: $${parseFloat(summary.eftpos).toFixed(2)}`);
     doc.text(`Cash: $${parseFloat(summary.cash).toFixed(2)}`);
     doc.text(`On Account: $${parseFloat(summary.on_account).toFixed(2)}`);
+    doc.text(`Long Term Payments: $${parseFloat(summary.longterm_total || 0).toFixed(2)}`);
     doc.moveDown();
     doc.fontSize(13).font('Helvetica-Bold').text('Daily Breakdown');
     doc.moveDown(0.3);
@@ -159,7 +237,7 @@ router.get('/revenue/pdf', requireAuth, async (req, res) => {
     doc.moveTo(40, doc.y).lineTo(550, doc.y).stroke();
     doc.moveDown(0.2);
     doc.font('Helvetica').fontSize(9);
-    dailyRevenue.forEach(row => {
+    dailyCombined.forEach(row => {
       if (doc.y > 750) doc.addPage();
       const y = doc.y;
       doc.text(row.date, 40, y, { width: 100, continued: true });

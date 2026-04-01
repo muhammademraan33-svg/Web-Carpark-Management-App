@@ -261,6 +261,20 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
+  // Account payment records (for tracking paid vs outstanding on monthly invoices)
+  x(`CREATE TABLE IF NOT EXISTS account_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    carpark_id INTEGER DEFAULT 1,
+    account_customer_id INTEGER NOT NULL,
+    payment_date DATE NOT NULL,
+    amount REAL NOT NULL,
+    payment_method TEXT,
+    transaction_reference TEXT,
+    notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+  try { x(`CREATE INDEX IF NOT EXISTS account_payments_by_account ON account_payments (carpark_id, account_customer_id, payment_date DESC)`); } catch (_) {}
+
   ['rego_1', 'rego_2'].forEach((col) => {
     try { x(`ALTER TABLE account_customers ADD COLUMN ${col} TEXT`); } catch (_) {}
   });

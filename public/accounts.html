@@ -75,6 +75,48 @@
         <div id="account-statement">
           <p class="text-muted small">Select month/year and click Load Statement</p>
         </div>
+
+        <div class="border-top pt-3 mt-3">
+          <div class="form-section-title"><i class="bi bi-cash-coin me-2"></i>Payments (paid vs outstanding)</div>
+          <div class="row g-2 mb-2">
+            <div class="col-md-3">
+              <label class="form-label">Amount</label>
+              <input type="number" step="0.01" class="form-control form-control-sm" id="acct-pay-amount" placeholder="e.g. 230.00">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Payment date</label>
+              <input type="date" class="form-control form-control-sm" id="acct-pay-date">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Method</label>
+              <select class="form-select form-select-sm" id="acct-pay-method">
+                <option value="">--</option>
+                <option>Internet Bank</option>
+                <option>Eftpos</option>
+                <option>Cash</option>
+                <option>Other</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Reference</label>
+              <input type="text" class="form-control form-control-sm" id="acct-pay-ref" placeholder="optional">
+            </div>
+            <div class="col-12 d-flex gap-2 align-items-center">
+              <button class="btn btn-sm btn-success" id="btn-add-acct-payment"><i class="bi bi-plus-circle me-1"></i>Add Payment</button>
+              <div class="small text-muted" id="acct-pay-summary"></div>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered mb-0">
+              <thead class="table-light">
+                <tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th></tr>
+              </thead>
+              <tbody id="acct-payments-tbody">
+                <tr><td colspan="4" class="text-center text-muted small">No payments recorded for this period.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -254,9 +296,58 @@
           <i class="bi bi-envelope me-1"></i>Send Account Email
         </a>
       `;
+
+      // Payments summary for the same month/year period
+      const paid = Number(data.paid || 0);
+      const outstanding = Number(data.outstanding || 0);
+      const total = Number(data.total || 0);
+      document.getElementById('acct-pay-summary').textContent =
+        `Invoiced: ${formatCurrency(total)}. Paid: ${formatCurrency(paid)}. Outstanding: ${formatCurrency(outstanding)}.`;
+      const pt = document.getElementById('acct-payments-tbody');
+      const payments = data.payments || [];
+      pt.innerHTML = payments.length
+        ? payments.map(p => `
+          <tr>
+            <td class="small">${p.payment_date || ''}</td>
+            <td class="fw-bold text-success">${formatCurrency(p.amount || 0)}</td>
+            <td class="small">${p.payment_method || ''}</td>
+            <td class="small">${p.transaction_reference || ''}</td>
+          </tr>
+        `).join('')
+        : '<tr><td colspan="4" class="text-center text-muted small">No payments recorded for this period.</td></tr>';
     }
 
     document.getElementById('btn-load-statement').addEventListener('click', loadStatement);
+
+    function setAccountPaymentDefaults() {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      const el = document.getElementById('acct-pay-date');
+      if (el && !el.value) el.value = `${y}-${m}-${d}`;
+    }
+
+    document.getElementById('btn-add-acct-payment').addEventListener('click', async () => {
+      if (!currentAccountId) return;
+      const amount = parseFloat(document.getElementById('acct-pay-amount').value);
+      const payment_date = document.getElementById('acct-pay-date').value;
+      const payment_method = document.getElementById('acct-pay-method').value;
+      const transaction_reference = document.getElementById('acct-pay-ref').value;
+      if (!Number.isFinite(amount) || amount <= 0) { showAlert('Enter a valid payment amount', 'danger'); return; }
+      if (!payment_date) { showAlert('Select a payment date', 'danger'); return; }
+      const res = await fetch(`/api/accounts/${currentAccountId}/payments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payment_date, amount, payment_method, transaction_reference })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { showAlert(data.error || 'Failed to add payment', 'danger'); return; }
+      showAlert('Payment recorded', 'success');
+      document.getElementById('acct-pay-amount').value = '';
+      document.getElementById('acct-pay-ref').value = '';
+      await loadStatement();
+    });
 
     document.getElementById('btn-new-acct').addEventListener('click', () => {
       document.getElementById('acct-id').value = '';
@@ -318,6 +409,7 @@
       await checkAuth();
       await loadAccounts();
       updateNavCarsCount();
+      setAccountPaymentDefaults();
     }
     init();
   </script>

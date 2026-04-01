@@ -188,6 +188,7 @@ function calcNights24h(dateIn, timeIn, dateOut, timeOut) {
   const diffMs = t2 - t1;
   if (diffMs <= 0) return 1;
   const dayMs = 24 * 60 * 60 * 1000;
+  if (diffMs <= dayMs) return 1;
   return Math.max(1, Math.ceil(diffMs / dayMs));
 }
 
