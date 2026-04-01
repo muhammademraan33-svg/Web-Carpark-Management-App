@@ -5,6 +5,25 @@ const { releaseKey, syncKeyBoxForPickedUp } = require('../utils/keyBoxSync');
 const PDFDocument = require('pdfkit');
 const router = express.Router();
 
+function parseClockToHm(input) {
+  const s = String(input || '').trim().toLowerCase();
+  const m = s.match(/^(\d{1,2}):(\d{2})(?:\s*([ap]m))?$/i);
+  if (!m) return null;
+  let hh = parseInt(m[1], 10);
+  const mm = parseInt(m[2], 10);
+  const ap = (m[3] || '').toLowerCase();
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  if (mm < 0 || mm > 59) return null;
+  if (ap) {
+    if (hh < 1 || hh > 12) return null;
+    if (ap === 'am') hh = (hh === 12) ? 0 : hh;
+    if (ap === 'pm') hh = (hh === 12) ? 12 : (hh + 12);
+  } else {
+    if (hh < 0 || hh > 23) return null;
+  }
+  return { hh, mm };
+}
+
 function deriveStayNights24h(dateIn, timeIn, returnDate, returnTime, fallback = 0) {
   const f = parseInt(fallback, 10);
   if (!dateIn || !returnDate) return Number.isFinite(f) ? f : 0;
@@ -12,15 +31,11 @@ function deriveStayNights24h(dateIn, timeIn, returnDate, returnTime, fallback = 
   const [y2, m2, d2] = String(returnDate).slice(0, 10).split('-').map(Number);
   if (![y1, m1, d1, y2, m2, d2].every(Number.isFinite)) return Number.isFinite(f) ? f : 0;
 
-  const tin = String(timeIn || '').trim();
-  const tout = String(returnTime || '').trim();
-  const hasTimes = /^\d{1,2}:\d{2}$/.test(tin) && /^\d{1,2}:\d{2}$/.test(tout);
-  if (hasTimes) {
-    const [hh1, mm1] = tin.split(':').map(Number);
-    const [hh2, mm2] = tout.split(':').map(Number);
-    if (![hh1, mm1, hh2, mm2].every(Number.isFinite)) return Number.isFinite(f) ? f : 0;
-    const t1 = Date.UTC(y1, m1 - 1, d1, hh1, mm1);
-    const t2 = Date.UTC(y2, m2 - 1, d2, hh2, mm2);
+  const tIn = parseClockToHm(timeIn);
+  const tOut = parseClockToHm(returnTime);
+  if (tIn && tOut) {
+    const t1 = Date.UTC(y1, m1 - 1, d1, tIn.hh, tIn.mm);
+    const t2 = Date.UTC(y2, m2 - 1, d2, tOut.hh, tOut.mm);
     const diffMs = t2 - t1;
     if (diffMs <= 0) return 1;
     const dayMs = 24 * 60 * 60 * 1000;

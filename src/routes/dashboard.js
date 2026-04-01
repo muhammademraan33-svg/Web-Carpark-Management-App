@@ -13,8 +13,13 @@ router.get('/stats', requireAuth, async (req, res) => {
     const firstOfMonth = today.substring(0, 8) + '01';
 
     const carsInYard     = await db.prepare(`SELECT COUNT(*) as count FROM invoices WHERE carpark_id = ? AND void = 0 AND picked_up = 'Car In Yard'`).get(carparkId);
-    const revenueToday   = await db.prepare(`SELECT COALESCE(SUM(payment_amount + payment_amount_2), 0) as total FROM invoices WHERE carpark_id = ? AND DATE(date_in) = ? AND void = 0 AND paid_status != 'To Pay'`).get(carparkId, today);
-    const revenueMonth   = await db.prepare(`SELECT COALESCE(SUM(payment_amount + payment_amount_2), 0) as total FROM invoices WHERE carpark_id = ? AND DATE(date_in) >= ? AND void = 0 AND paid_status != 'To Pay'`).get(carparkId, firstOfMonth);
+    const invRevenueToday = await db.prepare(`SELECT COALESCE(SUM(payment_amount + payment_amount_2), 0) as total FROM invoices WHERE carpark_id = ? AND DATE(date_in) = ? AND void = 0 AND paid_status != 'To Pay'`).get(carparkId, today);
+    const invRevenueMonth = await db.prepare(`SELECT COALESCE(SUM(payment_amount + payment_amount_2), 0) as total FROM invoices WHERE carpark_id = ? AND DATE(date_in) >= ? AND void = 0 AND paid_status != 'To Pay'`).get(carparkId, firstOfMonth);
+    // Long-term payments are stored ex GST; dashboard revenue is shown inc GST (same as invoice totals).
+    const ltRevenueToday  = await db.prepare(`SELECT COALESCE(SUM(amount_ex_gst * 1.15), 0) as total FROM longterm_payments WHERE carpark_id = ? AND DATE(payment_date) = ?`).get(carparkId, today);
+    const ltRevenueMonth  = await db.prepare(`SELECT COALESCE(SUM(amount_ex_gst * 1.15), 0) as total FROM longterm_payments WHERE carpark_id = ? AND DATE(payment_date) >= ?`).get(carparkId, firstOfMonth);
+    const revenueTodayTotal = (invRevenueToday.total || 0) + (ltRevenueToday.total || 0);
+    const revenueMonthTotal = (invRevenueMonth.total || 0) + (ltRevenueMonth.total || 0);
     const carpark        = await db.prepare('SELECT capacity FROM carparks WHERE id = ?').get(carparkId);
     const carparkCapacity = carpark ? carpark.capacity : 100;
     // Short-term occupancy: same basis as Key Box — standard slots only (not LT), % = in_use / total slots
@@ -31,6 +36,10 @@ router.get('/stats', requireAuth, async (req, res) => {
     // All cars scheduled to return today (matches Returns page default), not only "still in yard"
     const carsReturnToday= await db.prepare(`SELECT COUNT(*) as count FROM invoices WHERE carpark_id = ? AND DATE(return_date) = ? AND void = 0`).get(carparkId, today);
     const revenueByMethod= await db.prepare(`SELECT paid_status, COALESCE(SUM(payment_amount), 0) as total FROM invoices WHERE carpark_id = ? AND DATE(date_in) >= ? AND void = 0 GROUP BY paid_status`).all(carparkId, firstOfMonth);
+    // Add long-term revenue into the breakdown so the chart matches the month total.
+    if ((ltRevenueMonth.total || 0) > 0) {
+      revenueByMethod.push({ paid_status: 'LongTerm', total: ltRevenueMonth.total });
+    }
     const recentInvoices = await db.prepare(`SELECT i.*, u.name as staff_name FROM invoices i LEFT JOIN users u ON i.staff_id = u.id WHERE i.carpark_id = ? AND i.void = 0 ORDER BY i.created_at DESC LIMIT 10`).all(carparkId);
     const onAccountBalance = await db.prepare(`SELECT COALESCE(SUM(payment_amount), 0) as total FROM invoices WHERE carpark_id = ? AND paid_status = 'OnAcc' AND void = 0`).get(carparkId);
     const availableKeys  = await db.prepare(`SELECT COUNT(*) as count FROM key_box WHERE carpark_id = ? AND status = 'available'`).get(carparkId);
@@ -38,8 +47,9 @@ router.get('/stats', requireAuth, async (req, res) => {
     const last7Days = [];
     for (let i = 6; i >= 0; i--) {
       const dateStr = addCalendarDaysYmd(today, -i);
-      const rev = await db.prepare(`SELECT COALESCE(SUM(payment_amount + payment_amount_2), 0) as total FROM invoices WHERE carpark_id = ? AND DATE(date_in) = ? AND void = 0 AND paid_status != 'To Pay'`).get(carparkId, dateStr);
-      last7Days.push({ date: dateStr, total: rev.total });
+      const invRev = await db.prepare(`SELECT COALESCE(SUM(payment_amount + payment_amount_2), 0) as total FROM invoices WHERE carpark_id = ? AND DATE(date_in) = ? AND void = 0 AND paid_status != 'To Pay'`).get(carparkId, dateStr);
+      const ltRev  = await db.prepare(`SELECT COALESCE(SUM(amount_ex_gst * 1.15), 0) as total FROM longterm_payments WHERE carpark_id = ? AND DATE(payment_date) = ?`).get(carparkId, dateStr);
+      last7Days.push({ date: dateStr, total: (invRev.total || 0) + (ltRev.total || 0) });
     }
 
     res.json({
@@ -51,7 +61,7 @@ router.get('/stats', requireAuth, async (req, res) => {
       // legacy: occupancy denominator is now key slots (same as Key Box total), not carpark.capacity
       capacity: totalSlots,
       occupancyRate,
-      revenueToday: revenueToday.total || 0, revenueMonth: revenueMonth.total || 0,
+      revenueToday: revenueTodayTotal, revenueMonth: revenueMonthTotal,
       carsInToday: carsInToday.count || 0, carsReturnToday: carsReturnToday.count || 0,
       revenueByMethod, recentInvoices, last7Days,
       onAccountBalance: onAccountBalance.total || 0, availableKeys: availableKeys.count || 0
