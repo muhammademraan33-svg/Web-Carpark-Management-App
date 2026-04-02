@@ -33,11 +33,12 @@
               <th>Billing Email</th>
               <th>Discount</th>
               <th>Credit Balance</th>
+              <th>This month</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody id="accounts-tbody">
-            <tr><td colspan="8" class="text-center"><div class="spinner-border spinner-border-sm"></div></td></tr>
+            <tr><td colspan="9" class="text-center"><div class="spinner-border spinner-border-sm"></div></td></tr>
           </tbody>
         </table>
       </div>
@@ -195,7 +196,7 @@
       const tbody = document.getElementById('accounts-tbody');
 
       if (accounts.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No account customers yet</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">No account customers yet</td></tr>';
         return;
       }
 
@@ -208,6 +209,9 @@
           <td>${a.billing_email||a.email||''}</td>
           <td>${a.discount_percent > 0 ? `<span class="badge bg-info">${a.discount_percent}%</span>` : '—'}</td>
           <td>${a.credit_balance > 0 ? `<span class="text-success fw-bold">${formatCurrency(a.credit_balance)}</span>` : '—'}</td>
+          <td class="small">${a.month_payment_status === 'Outstanding'
+            ? `<span class="badge bg-warning text-dark">Outstanding ${formatCurrency(a.month_outstanding || 0)}</span>`
+            : (a.month_payment_status === 'Paid' ? '<span class="badge bg-success">Paid</span>' : '—')}</td>
           <td>
             <div class="d-flex gap-1">
               <button class="btn btn-action btn-warning btn-edit" data-id="${a.id}">Edit</button>

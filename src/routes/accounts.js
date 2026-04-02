@@ -1,12 +1,42 @@
 const express = require('express');
 const { db } = require('../database');
 const { requireAuth } = require('../middleware/auth');
+const { businessDateYmd } = require('../utils/businessDate');
 const router = express.Router();
 
 router.get('/', requireAuth, async (req, res) => {
   try {
-    const accounts = await db.prepare('SELECT * FROM account_customers WHERE carpark_id = ? AND active = 1 ORDER BY company_name').all(req.session.carparkId || 1);
-    res.json(accounts);
+    const carparkId = req.session.carparkId || 1;
+    const today = businessDateYmd();
+    const y = parseInt(today.slice(0, 4), 10);
+    const mo = parseInt(today.slice(5, 7), 10);
+    const monthStart = `${today.slice(0, 7)}-01`;
+    const last = new Date(y, mo, 0);
+    const monthEnd = `${y}-${String(mo).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`;
+
+    const accounts = await db.prepare(`
+      SELECT a.*,
+        (SELECT COALESCE(SUM(COALESCE(i.payment_amount,0)+COALESCE(i.payment_amount_2,0)),0) FROM invoices i
+         WHERE i.account_customer_id = a.id AND i.carpark_id = a.carpark_id AND i.void = 0
+         AND substr(trim(COALESCE(i.date_in,'')),1,10) >= ? AND substr(trim(COALESCE(i.date_in,'')),1,10) <= ?) AS month_billed,
+        (SELECT COALESCE(SUM(p.amount),0) FROM account_payments p
+         WHERE p.account_customer_id = a.id AND p.carpark_id = a.carpark_id
+         AND substr(trim(COALESCE(p.payment_date,'')),1,10) >= ? AND substr(trim(COALESCE(p.payment_date,'')),1,10) <= ?) AS month_paid
+      FROM account_customers a
+      WHERE a.carpark_id = ? AND a.active = 1 ORDER BY a.company_name
+    `).all(monthStart, monthEnd, monthStart, monthEnd, carparkId);
+
+    const rows = accounts.map((a) => {
+      const billed = parseFloat(a.month_billed) || 0;
+      const paid = parseFloat(a.month_paid) || 0;
+      const out = Math.round((billed - paid) * 100) / 100;
+      return {
+        ...a,
+        month_outstanding: out,
+        month_payment_status: billed <= 0 ? '—' : (out <= 0.01 ? 'Paid' : 'Outstanding'),
+      };
+    });
+    res.json(rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

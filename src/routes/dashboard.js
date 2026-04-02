@@ -13,11 +13,13 @@ router.get('/stats', requireAuth, async (req, res) => {
     const firstOfMonth = today.substring(0, 8) + '01';
 
     const carsInYard     = await db.prepare(`SELECT COUNT(*) as count FROM invoices WHERE carpark_id = ? AND void = 0 AND picked_up = 'Car In Yard'`).get(carparkId);
-    const invRevenueToday = await db.prepare(`SELECT COALESCE(SUM(payment_amount + payment_amount_2), 0) as total FROM invoices WHERE carpark_id = ? AND DATE(date_in) = ? AND void = 0 AND paid_status != 'To Pay'`).get(carparkId, today);
-    const invRevenueMonth = await db.prepare(`SELECT COALESCE(SUM(payment_amount + payment_amount_2), 0) as total FROM invoices WHERE carpark_id = ? AND DATE(date_in) >= ? AND void = 0 AND paid_status != 'To Pay'`).get(carparkId, firstOfMonth);
+    const invDay = `substr(trim(COALESCE(date_in,'')), 1, 10)`;
+    const invRevenueToday = await db.prepare(`SELECT COALESCE(SUM(payment_amount + payment_amount_2), 0) as total FROM invoices WHERE carpark_id = ? AND ${invDay} = ? AND void = 0 AND paid_status != 'To Pay'`).get(carparkId, today);
+    const invRevenueMonth = await db.prepare(`SELECT COALESCE(SUM(payment_amount + payment_amount_2), 0) as total FROM invoices WHERE carpark_id = ? AND ${invDay} >= ? AND void = 0 AND paid_status != 'To Pay'`).get(carparkId, firstOfMonth);
     // Long-term payments are stored ex GST; dashboard revenue is shown inc GST (same as invoice totals).
-    const ltRevenueToday  = await db.prepare(`SELECT COALESCE(SUM(amount_ex_gst * 1.15), 0) as total FROM longterm_payments WHERE carpark_id = ? AND DATE(payment_date) = ?`).get(carparkId, today);
-    const ltRevenueMonth  = await db.prepare(`SELECT COALESCE(SUM(amount_ex_gst * 1.15), 0) as total FROM longterm_payments WHERE carpark_id = ? AND DATE(payment_date) >= ?`).get(carparkId, firstOfMonth);
+    const ltDay = `substr(trim(COALESCE(payment_date,'')), 1, 10)`;
+    const ltRevenueToday  = await db.prepare(`SELECT COALESCE(SUM(amount_ex_gst * 1.15), 0) as total FROM longterm_payments WHERE carpark_id = ? AND ${ltDay} = ?`).get(carparkId, today);
+    const ltRevenueMonth  = await db.prepare(`SELECT COALESCE(SUM(amount_ex_gst * 1.15), 0) as total FROM longterm_payments WHERE carpark_id = ? AND ${ltDay} >= ?`).get(carparkId, firstOfMonth);
     const revenueTodayTotal = (invRevenueToday.total || 0) + (ltRevenueToday.total || 0);
     const revenueMonthTotal = (invRevenueMonth.total || 0) + (ltRevenueMonth.total || 0);
     const carpark        = await db.prepare('SELECT capacity FROM carparks WHERE id = ?').get(carparkId);
@@ -32,10 +34,10 @@ router.get('/stats', requireAuth, async (req, res) => {
     const occupancyRate = totalSlots > 0
       ? Math.min(100, Math.round((inUseSlots / totalSlots) * 1000) / 10)
       : 0;
-    const carsInToday    = await db.prepare(`SELECT COUNT(*) as count FROM invoices WHERE carpark_id = ? AND DATE(date_in) = ? AND void = 0`).get(carparkId, today);
+    const carsInToday    = await db.prepare(`SELECT COUNT(*) as count FROM invoices WHERE carpark_id = ? AND ${invDay} = ? AND void = 0`).get(carparkId, today);
     // All cars scheduled to return today (matches Returns page default), not only "still in yard"
     const carsReturnToday= await db.prepare(`SELECT COUNT(*) as count FROM invoices WHERE carpark_id = ? AND DATE(return_date) = ? AND void = 0`).get(carparkId, today);
-    const revenueByMethod= await db.prepare(`SELECT paid_status, COALESCE(SUM(payment_amount), 0) as total FROM invoices WHERE carpark_id = ? AND DATE(date_in) >= ? AND void = 0 GROUP BY paid_status`).all(carparkId, firstOfMonth);
+    const revenueByMethod= await db.prepare(`SELECT paid_status, COALESCE(SUM(payment_amount), 0) as total FROM invoices WHERE carpark_id = ? AND ${invDay} >= ? AND void = 0 GROUP BY paid_status`).all(carparkId, firstOfMonth);
     // Add long-term revenue into the breakdown so the chart matches the month total.
     if ((ltRevenueMonth.total || 0) > 0) {
       revenueByMethod.push({ paid_status: 'LongTerm', total: ltRevenueMonth.total });
@@ -47,8 +49,8 @@ router.get('/stats', requireAuth, async (req, res) => {
     const last7Days = [];
     for (let i = 6; i >= 0; i--) {
       const dateStr = addCalendarDaysYmd(today, -i);
-      const invRev = await db.prepare(`SELECT COALESCE(SUM(payment_amount + payment_amount_2), 0) as total FROM invoices WHERE carpark_id = ? AND DATE(date_in) = ? AND void = 0 AND paid_status != 'To Pay'`).get(carparkId, dateStr);
-      const ltRev  = await db.prepare(`SELECT COALESCE(SUM(amount_ex_gst * 1.15), 0) as total FROM longterm_payments WHERE carpark_id = ? AND DATE(payment_date) = ?`).get(carparkId, dateStr);
+      const invRev = await db.prepare(`SELECT COALESCE(SUM(payment_amount + payment_amount_2), 0) as total FROM invoices WHERE carpark_id = ? AND ${invDay} = ? AND void = 0 AND paid_status != 'To Pay'`).get(carparkId, dateStr);
+      const ltRev  = await db.prepare(`SELECT COALESCE(SUM(amount_ex_gst * 1.15), 0) as total FROM longterm_payments WHERE carpark_id = ? AND ${ltDay} = ?`).get(carparkId, dateStr);
       last7Days.push({ date: dateStr, total: (invRev.total || 0) + (ltRev.total || 0) });
     }
 

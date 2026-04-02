@@ -586,6 +586,9 @@ document.getElementById('inv-return-date').addEventListener('change', () => {
   loadFlightsForDate(document.getElementById('inv-return-date').value);
 });
 document.getElementById('inv-time-in').addEventListener('change', updateNightsAndDisplay);
+document.getElementById('inv-time-in').addEventListener('input', updateNightsAndDisplay);
+document.getElementById('inv-return-time').addEventListener('change', updateNightsAndDisplay);
+document.getElementById('inv-return-time').addEventListener('input', updateNightsAndDisplay);
 document.getElementById('inv-return-time-tbc').addEventListener('change', (e) => {
   const d = document.getElementById('inv-return-date');
   const t = document.getElementById('inv-return-time');

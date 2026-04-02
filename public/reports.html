@@ -96,11 +96,11 @@
             <thead>
               <tr>
                 <th>Period</th><th>Invoices</th><th>Eftpos</th><th>Cash</th>
-                <th>On Account</th><th>Outstanding</th><th>Total</th>
+                <th>On Account</th><th>Long Term</th><th>Outstanding</th><th>Total</th>
               </tr>
             </thead>
             <tbody id="revenue-tbody">
-              <tr><td colspan="7" class="text-center text-muted">Load a report</td></tr>
+              <tr><td colspan="8" class="text-center text-muted">Load a report</td></tr>
             </tbody>
           </table>
         </div>
@@ -200,7 +200,7 @@
     // Set default date ranges (this month)
     const now = new Date();
     const firstOfMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
-    const todayStr = now.toISOString().split('T')[0];
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
 
     ['rev-from','occ-from','cust-from'].forEach(id => document.getElementById(id).value = firstOfMonth);
     ['rev-to','occ-to','cust-to'].forEach(id => document.getElementById(id).value = todayStr);
@@ -233,10 +233,11 @@
           <td>${formatCurrency(r.eftpos)}</td>
           <td>${formatCurrency(r.cash)}</td>
           <td>${formatCurrency(r.on_account)}</td>
+          <td class="text-primary">${formatCurrency(r.longterm || 0)}</td>
           <td class="text-warning">${formatCurrency(r.outstanding)}</td>
           <td class="fw-bold text-success">${formatCurrency(r.total)}</td>
         </tr>
-      `).join('') || '<tr><td colspan="7" class="text-center text-muted">No data</td></tr>';
+      `).join('') || '<tr><td colspan="8" class="text-center text-muted">No data</td></tr>';
 
       // Chart
       const labels = data.revenue.map(r => r.period).reverse();
@@ -244,6 +245,7 @@
       const eftpos = data.revenue.map(r => r.eftpos).reverse();
       const cash = data.revenue.map(r => r.cash).reverse();
       const account = data.revenue.map(r => r.on_account).reverse();
+      const longterm = data.revenue.map(r => r.longterm || 0).reverse();
 
       if (revenueChart) revenueChart.destroy();
       revenueChart = new Chart(document.getElementById('revenueChart'), {
@@ -253,7 +255,8 @@
           datasets: [
             { label: 'Eftpos', data: eftpos, backgroundColor: '#27ae60' },
             { label: 'Cash', data: cash, backgroundColor: '#2980b9' },
-            { label: 'On Account', data: account, backgroundColor: '#e74c3c' }
+            { label: 'On Account', data: account, backgroundColor: '#e74c3c' },
+            { label: 'Long Term', data: longterm, backgroundColor: '#8e44ad' }
           ]
         },
         options: {

@@ -1,30 +1,43 @@
 const express = require('express');
 const { db } = require('../database');
 const { requireAuth } = require('../middleware/auth');
+const { businessDateYmd } = require('../utils/businessDate');
 const PDFDocument = require('pdfkit');
 const router = express.Router();
+
+// Calendar date from stored values (handles YYYY-MM-DD and ISO timestamps; avoids SQLite DATE() quirks on some rows)
+const INV_DAY = `substr(trim(COALESCE(date_in,'')), 1, 10)`;
+const RET_DAY = `substr(trim(COALESCE(return_date,'')), 1, 10)`;
+const LT_DAY = `substr(trim(COALESCE(payment_date,'')), 1, 10)`;
+const INV_MONTH = `substr(trim(COALESCE(date_in,'')), 1, 7)`;
+const LT_MONTH = `substr(trim(COALESCE(payment_date,'')), 1, 7)`;
+// Split payments: count both payment lines toward Eftpos/Cash/OnAcc
+const SUM_EFTPOS = `(COALESCE(CASE WHEN paid_status = 'Eftpos' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'Eftpos' THEN payment_amount_2 ELSE 0 END, 0))`;
+const SUM_CASH = `(COALESCE(CASE WHEN paid_status = 'Cash' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'Cash' THEN payment_amount_2 ELSE 0 END, 0))`;
+const SUM_ONACC = `(COALESCE(CASE WHEN paid_status = 'OnAcc' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'OnAcc' THEN payment_amount_2 ELSE 0 END, 0))`;
 
 router.get('/revenue', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
     const { from, to, group_by } = req.query;
-    const today = new Date().toISOString().split('T')[0];
-    const fromDate = from || new Date(new Date().setDate(1)).toISOString().split('T')[0];
+    const today = businessDateYmd();
+    const firstOfMonth = today.substring(0, 8) + '01';
+    const fromDate = from || firstOfMonth;
     const toDate   = to || today;
-    let groupExprInv = "DATE(date_in)";
-    let groupExprLt  = "DATE(payment_date)";
+    let groupExprInv = INV_DAY;
+    let groupExprLt  = LT_DAY;
     if (group_by === 'week')  { groupExprInv = "strftime('%Y-W%W', date_in)"; groupExprLt = "strftime('%Y-W%W', payment_date)"; }
-    else if (group_by === 'month') { groupExprInv = "strftime('%Y-%m', date_in)"; groupExprLt = "strftime('%Y-%m', payment_date)"; }
+    else if (group_by === 'month') { groupExprInv = INV_MONTH; groupExprLt = LT_MONTH; }
 
     const invRevenue = await db.prepare(`
       SELECT ${groupExprInv} as period, COUNT(*) as invoices,
         COALESCE(SUM(payment_amount + payment_amount_2), 0) as total,
-        COALESCE(SUM(CASE WHEN paid_status = 'Eftpos' THEN payment_amount ELSE 0 END), 0) as eftpos,
-        COALESCE(SUM(CASE WHEN paid_status = 'Cash' THEN payment_amount ELSE 0 END), 0) as cash,
-        COALESCE(SUM(CASE WHEN paid_status = 'OnAcc' THEN payment_amount ELSE 0 END), 0) as on_account,
+        COALESCE(SUM(${SUM_EFTPOS}), 0) as eftpos,
+        COALESCE(SUM(${SUM_CASH}), 0) as cash,
+        COALESCE(SUM(${SUM_ONACC}), 0) as on_account,
         COALESCE(SUM(CASE WHEN paid_status = 'To Pay' THEN total_price ELSE 0 END), 0) as outstanding
       FROM invoices WHERE carpark_id = ? AND void = 0
-      AND DATE(date_in) >= ? AND DATE(date_in) <= ?
+      AND ${INV_DAY} >= ? AND ${INV_DAY} <= ?
       GROUP BY ${groupExprInv} ORDER BY period DESC
     `).all(carparkId, fromDate, toDate);
 
@@ -34,7 +47,7 @@ router.get('/revenue', requireAuth, async (req, res) => {
         COALESCE(SUM(amount_ex_gst * 1.15), 0) as longterm_total
       FROM longterm_payments
       WHERE carpark_id = ?
-        AND DATE(payment_date) >= ? AND DATE(payment_date) <= ?
+        AND ${LT_DAY} >= ? AND ${LT_DAY} <= ?
       GROUP BY ${groupExprLt} ORDER BY period DESC
     `).all(carparkId, fromDate, toDate);
 
@@ -44,6 +57,7 @@ router.get('/revenue', requireAuth, async (req, res) => {
       const existing = byPeriod.get(r.period) || { period: r.period, invoices: 0, total: 0, eftpos: 0, cash: 0, on_account: 0, outstanding: 0, longterm: 0 };
       existing.longterm = (existing.longterm || 0) + (r.longterm_total || 0);
       existing.total = (existing.total || 0) + (r.longterm_total || 0);
+      existing.lt_payments = (existing.lt_payments || 0) + (r.lt_payments || 0);
       byPeriod.set(r.period, existing);
     }
     const revenue = Array.from(byPeriod.values()).sort((a, b) => String(b.period).localeCompare(String(a.period)));
@@ -51,12 +65,12 @@ router.get('/revenue', requireAuth, async (req, res) => {
     const invSummary = await db.prepare(`
       SELECT COUNT(*) as total_invoices,
         COALESCE(SUM(payment_amount + payment_amount_2), 0) as total_revenue,
-        COALESCE(SUM(CASE WHEN paid_status = 'Eftpos' THEN payment_amount ELSE 0 END), 0) as eftpos_total,
-        COALESCE(SUM(CASE WHEN paid_status = 'Cash' THEN payment_amount ELSE 0 END), 0) as cash_total,
-        COALESCE(SUM(CASE WHEN paid_status = 'OnAcc' THEN payment_amount ELSE 0 END), 0) as on_account_total,
+        COALESCE(SUM(${SUM_EFTPOS}), 0) as eftpos_total,
+        COALESCE(SUM(${SUM_CASH}), 0) as cash_total,
+        COALESCE(SUM(${SUM_ONACC}), 0) as on_account_total,
         COALESCE(SUM(CASE WHEN paid_status = 'To Pay' THEN total_price ELSE 0 END), 0) as outstanding_total
       FROM invoices WHERE carpark_id = ? AND void = 0
-      AND DATE(date_in) >= ? AND DATE(date_in) <= ?
+      AND ${INV_DAY} >= ? AND ${INV_DAY} <= ?
     `).get(carparkId, fromDate, toDate);
 
     const ltSummary = await db.prepare(`
@@ -64,7 +78,7 @@ router.get('/revenue', requireAuth, async (req, res) => {
         COALESCE(SUM(amount_ex_gst * 1.15), 0) as longterm_total
       FROM longterm_payments
       WHERE carpark_id = ?
-        AND DATE(payment_date) >= ? AND DATE(payment_date) <= ?
+        AND ${LT_DAY} >= ? AND ${LT_DAY} <= ?
     `).get(carparkId, fromDate, toDate);
 
     const summary = {
@@ -80,18 +94,19 @@ router.get('/occupancy', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
     const { from, to } = req.query;
-    const today = new Date().toISOString().split('T')[0];
-    const fromDate = from || new Date(new Date().setDate(1)).toISOString().split('T')[0];
+    const today = businessDateYmd();
+    const firstOfMonth = today.substring(0, 8) + '01';
+    const fromDate = from || firstOfMonth;
     const toDate   = to || today;
     const carpark  = await db.prepare('SELECT capacity FROM carparks WHERE id = ?').get(carparkId);
     const capacity = carpark ? carpark.capacity : 100;
     const occupancy = await db.prepare(`
-      SELECT DATE(date_in) as date, COUNT(*) as cars_in,
-        COUNT(CASE WHEN DATE(return_date) = DATE(date_in) THEN 1 END) as same_day,
-        COUNT(CASE WHEN DATE(return_date) > DATE(date_in) THEN 1 END) as overnight
+      SELECT ${INV_DAY} as date, COUNT(*) as cars_in,
+        COUNT(CASE WHEN ${RET_DAY} = ${INV_DAY} THEN 1 END) as same_day,
+        COUNT(CASE WHEN ${RET_DAY} > ${INV_DAY} THEN 1 END) as overnight
       FROM invoices WHERE carpark_id = ? AND void = 0
-      AND DATE(date_in) >= ? AND DATE(date_in) <= ?
-      GROUP BY DATE(date_in) ORDER BY date DESC
+      AND ${INV_DAY} >= ? AND ${INV_DAY} <= ?
+      GROUP BY ${INV_DAY} ORDER BY date DESC
     `).all(carparkId, fromDate, toDate);
     res.json({ occupancy, capacity, fromDate, toDate });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -101,22 +116,23 @@ router.get('/customers', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
     const { from, to } = req.query;
-    const today = new Date().toISOString().split('T')[0];
-    const fromDate = from || new Date(new Date().setDate(1)).toISOString().split('T')[0];
+    const today = businessDateYmd();
+    const firstOfMonth = today.substring(0, 8) + '01';
+    const fromDate = from || firstOfMonth;
     const toDate   = to || today;
     const topCustomers = await db.prepare(`
       SELECT first_name || ' ' || last_name as name, phone, COUNT(*) as visits,
         COALESCE(SUM(total_price), 0) as total_spent, MAX(date_in) as last_visit
       FROM invoices WHERE carpark_id = ? AND void = 0
-      AND DATE(date_in) >= ? AND DATE(date_in) <= ?
+      AND ${INV_DAY} >= ? AND ${INV_DAY} <= ?
       AND (first_name IS NOT NULL OR last_name IS NOT NULL)
       GROUP BY LOWER(COALESCE(first_name,'') || LOWER(COALESCE(last_name,'')))
       ORDER BY visits DESC LIMIT 50
     `).all(carparkId, fromDate, toDate);
     const accountUsage = await db.prepare(`
-      SELECT ac.company_name, COUNT(i.id) as visits, COALESCE(SUM(i.payment_amount), 0) as total_billed
+      SELECT ac.company_name, COUNT(i.id) as visits, COALESCE(SUM(i.payment_amount + COALESCE(i.payment_amount_2,0)), 0) as total_billed
       FROM invoices i JOIN account_customers ac ON i.account_customer_id = ac.id
-      WHERE i.carpark_id = ? AND i.void = 0 AND DATE(i.date_in) >= ? AND DATE(i.date_in) <= ?
+      WHERE i.carpark_id = ? AND i.void = 0 AND substr(trim(COALESCE(i.date_in,'')),1,10) >= ? AND substr(trim(COALESCE(i.date_in,'')),1,10) <= ?
       GROUP BY i.account_customer_id ORDER BY total_billed DESC
     `).all(carparkId, fromDate, toDate);
     res.json({ topCustomers, accountUsage, fromDate, toDate });
@@ -127,8 +143,10 @@ router.get('/revenue/csv', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
     const { from, to } = req.query;
-    const fromDate = from || new Date(new Date().setDate(1)).toISOString().split('T')[0];
-    const toDate   = to || new Date().toISOString().split('T')[0];
+    const today = businessDateYmd();
+    const firstOfMonth = today.substring(0, 8) + '01';
+    const fromDate = from || firstOfMonth;
+    const toDate   = to || today;
     const invoices = await db.prepare(`
       SELECT i.invoice_number, i.date_in, i.return_date, i.stay_nights,
              i.first_name || ' ' || i.last_name as customer_name,
@@ -138,7 +156,7 @@ router.get('/revenue/csv', requireAuth, async (req, res) => {
       LEFT JOIN users u ON i.staff_id = u.id
       LEFT JOIN account_customers ac ON i.account_customer_id = ac.id
       WHERE i.carpark_id = ? AND i.void = 0
-      AND DATE(i.date_in) >= ? AND DATE(i.date_in) <= ?
+      AND substr(trim(COALESCE(i.date_in,'')),1,10) >= ? AND substr(trim(COALESCE(i.date_in,'')),1,10) <= ?
       ORDER BY i.date_in ASC
     `).all(carparkId, fromDate, toDate);
     const ltPayments = await db.prepare(`
@@ -147,7 +165,7 @@ router.get('/revenue/csv', requireAuth, async (req, res) => {
       FROM longterm_payments p
       JOIN longterm_customers lt ON lt.id = p.longterm_customer_id
       WHERE p.carpark_id = ?
-        AND DATE(p.payment_date) >= ? AND DATE(p.payment_date) <= ?
+        AND substr(trim(COALESCE(p.payment_date,'')),1,10) >= ? AND substr(trim(COALESCE(p.payment_date,'')),1,10) <= ?
       ORDER BY p.payment_date ASC
     `).all(carparkId, fromDate, toDate);
     res.setHeader('Content-Type', 'text/csv');
@@ -170,20 +188,22 @@ router.get('/revenue/pdf', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
     const { from, to } = req.query;
-    const fromDate = from || new Date(new Date().setDate(1)).toISOString().split('T')[0];
-    const toDate   = to || new Date().toISOString().split('T')[0];
+    const today = businessDateYmd();
+    const firstOfMonth = today.substring(0, 8) + '01';
+    const fromDate = from || firstOfMonth;
+    const toDate   = to || today;
     const carpark  = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(carparkId);
     const invSummary  = await db.prepare(`
       SELECT COUNT(*) as total_invoices, COALESCE(SUM(payment_amount + payment_amount_2), 0) as total_revenue,
-        COALESCE(SUM(CASE WHEN paid_status='Eftpos' THEN payment_amount ELSE 0 END), 0) as eftpos,
-        COALESCE(SUM(CASE WHEN paid_status='Cash' THEN payment_amount ELSE 0 END), 0) as cash,
-        COALESCE(SUM(CASE WHEN paid_status='OnAcc' THEN payment_amount ELSE 0 END), 0) as on_account
-      FROM invoices WHERE carpark_id = ? AND void = 0 AND DATE(date_in) >= ? AND DATE(date_in) <= ?
+        COALESCE(SUM(${SUM_EFTPOS}), 0) as eftpos,
+        COALESCE(SUM(${SUM_CASH}), 0) as cash,
+        COALESCE(SUM(${SUM_ONACC}), 0) as on_account
+      FROM invoices WHERE carpark_id = ? AND void = 0 AND ${INV_DAY} >= ? AND ${INV_DAY} <= ?
     `).get(carparkId, fromDate, toDate);
     const ltSummary = await db.prepare(`
       SELECT COUNT(*) as lt_payments, COALESCE(SUM(amount_ex_gst * 1.15), 0) as longterm_total
       FROM longterm_payments
-      WHERE carpark_id = ? AND DATE(payment_date) >= ? AND DATE(payment_date) <= ?
+      WHERE carpark_id = ? AND ${LT_DAY} >= ? AND ${LT_DAY} <= ?
     `).get(carparkId, fromDate, toDate);
     const summary = {
       ...invSummary,
@@ -191,15 +211,15 @@ router.get('/revenue/pdf', requireAuth, async (req, res) => {
       total_revenue: (invSummary.total_revenue || 0) + (ltSummary.longterm_total || 0),
     };
     const dailyRevenue = await db.prepare(`
-      SELECT DATE(date_in) as date, COUNT(*) as count, COALESCE(SUM(payment_amount + payment_amount_2), 0) as total
-      FROM invoices WHERE carpark_id = ? AND void = 0 AND DATE(date_in) >= ? AND DATE(date_in) <= ?
-      GROUP BY DATE(date_in) ORDER BY date ASC
+      SELECT ${INV_DAY} as date, COUNT(*) as count, COALESCE(SUM(payment_amount + payment_amount_2), 0) as total
+      FROM invoices WHERE carpark_id = ? AND void = 0 AND ${INV_DAY} >= ? AND ${INV_DAY} <= ?
+      GROUP BY ${INV_DAY} ORDER BY date ASC
     `).all(carparkId, fromDate, toDate);
     const dailyLt = await db.prepare(`
-      SELECT DATE(payment_date) as date, COUNT(*) as count, COALESCE(SUM(amount_ex_gst * 1.15), 0) as total
+      SELECT ${LT_DAY} as date, COUNT(*) as count, COALESCE(SUM(amount_ex_gst * 1.15), 0) as total
       FROM longterm_payments
-      WHERE carpark_id = ? AND DATE(payment_date) >= ? AND DATE(payment_date) <= ?
-      GROUP BY DATE(payment_date) ORDER BY date ASC
+      WHERE carpark_id = ? AND ${LT_DAY} >= ? AND ${LT_DAY} <= ?
+      GROUP BY ${LT_DAY} ORDER BY date ASC
     `).all(carparkId, fromDate, toDate);
     const byDay = new Map();
     dailyRevenue.forEach(r => byDay.set(r.date, { date: r.date, count: r.count || 0, total: r.total || 0 }));
@@ -253,13 +273,15 @@ router.get('/customers/csv', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
     const { from, to } = req.query;
-    const fromDate = from || new Date(new Date().setDate(1)).toISOString().split('T')[0];
-    const toDate   = to || new Date().toISOString().split('T')[0];
+    const today = businessDateYmd();
+    const firstOfMonth = today.substring(0, 8) + '01';
+    const fromDate = from || firstOfMonth;
+    const toDate   = to || today;
     const customers = await db.prepare(`
       SELECT first_name || ' ' || last_name as name, phone, rego,
         COUNT(*) as visits, COALESCE(SUM(total_price), 0) as total_spent, MAX(date_in) as last_visit
       FROM invoices WHERE carpark_id = ? AND void = 0
-      AND DATE(date_in) >= ? AND DATE(date_in) <= ?
+      AND ${INV_DAY} >= ? AND ${INV_DAY} <= ?
       GROUP BY LOWER(COALESCE(first_name,'') || LOWER(COALESCE(last_name,'')))
       ORDER BY visits DESC
     `).all(carparkId, fromDate, toDate);
