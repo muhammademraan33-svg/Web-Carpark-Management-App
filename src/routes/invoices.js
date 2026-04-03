@@ -5,8 +5,15 @@ const { releaseKey, syncKeyBoxForPickedUp } = require('../utils/keyBoxSync');
 const PDFDocument = require('pdfkit');
 const router = express.Router();
 
+function normalizeTimeString(raw) {
+  let s = String(raw || '').trim().replace(/\u202f/g, ' ').replace(/\s+/g, ' ').toLowerCase();
+  s = s.replace(/^(\d{1,2}):(\d{2}):\d{2}/, '$1:$2');
+  s = s.replace(/([ap])\.?\s*m\.?$/i, '$1m');
+  return s.trim();
+}
+
 function parseClockToHm(input) {
-  const s = String(input || '').trim().toLowerCase();
+  const s = normalizeTimeString(input);
   const m = s.match(/^(\d{1,2}):(\d{2})(?:\s*([ap]m))?$/i);
   if (!m) return null;
   let hh = parseInt(m[1], 10);

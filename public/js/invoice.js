@@ -135,12 +135,14 @@ document.getElementById('inv-flight-arrival-select').addEventListener('change', 
 async function newInvoice() {
   clearOnAccountPaymentLock();
   setPricingModeLabel('manual');
-  // Get next invoice number
+  // Must succeed before we clear — otherwise the screen looks unchanged (same V#) and users think the button is broken.
   const res = await fetch('/api/invoices/next-number');
-  if (res.ok) {
-    const data = await res.json();
-    document.getElementById('inv-number-display').textContent = data.invoiceNumber;
+  if (!res.ok) {
+    showAlert('Could not get the next invoice number. Check your connection and try again.', 'danger');
+    return;
   }
+  const data = await res.json();
+  document.getElementById('inv-number-display').textContent = data.invoiceNumber;
 
   // Clear form
   currentInvoiceId = null;
@@ -579,9 +581,14 @@ document.getElementById('inv-account-customer').addEventListener('change', () =>
 
 // ─── Event listeners ──────────────────────────────────────────────────────────
 document.getElementById('inv-date-in').addEventListener('change', updateNightsAndDisplay);
+document.getElementById('inv-date-in').addEventListener('input', updateNightsAndDisplay);
 document.getElementById('inv-nights').addEventListener('change', syncReturnDateFromNights);
 document.getElementById('inv-nights').addEventListener('blur', syncReturnDateFromNights);
 document.getElementById('inv-return-date').addEventListener('change', () => {
+  updateNightsAndDisplay();
+  loadFlightsForDate(document.getElementById('inv-return-date').value);
+});
+document.getElementById('inv-return-date').addEventListener('input', () => {
   updateNightsAndDisplay();
   loadFlightsForDate(document.getElementById('inv-return-date').value);
 });
@@ -786,9 +793,17 @@ document.getElementById('customer-search').addEventListener('keypress', (e) => {
 });
 
 // New invoice button
-document.getElementById('btn-new-invoice').addEventListener('click', () => {
-  newInvoice();
-  history.replaceState(null, '', '/invoice.html');
+document.getElementById('btn-new-invoice').addEventListener('click', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('btn-new-invoice');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  try {
+    await newInvoice();
+    history.replaceState(null, '', '/invoice.html');
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 // Customer alert modal

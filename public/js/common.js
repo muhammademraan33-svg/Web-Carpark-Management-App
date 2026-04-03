@@ -149,11 +149,20 @@ function calcNights(dateIn, dateOut) {
   return diffDays <= 0 ? 1 : diffDays;
 }
 
+function normalizeTimeString(raw) {
+  let s = String(raw || '').trim().replace(/\u202f/g, ' ').replace(/\s+/g, ' ').toLowerCase();
+  // "11:41:00" / "11:41:00 am" (browsers/DB often add seconds)
+  s = s.replace(/^(\d{1,2}):(\d{2}):\d{2}/, '$1:$2');
+  // "9:55 a.m." -> "9:55 am"
+  s = s.replace(/([ap])\.?\s*m\.?$/i, '$1m');
+  return s.trim();
+}
+
 function parseClockToHm(input) {
-  const s = String(input || '').trim().toLowerCase();
+  const s = normalizeTimeString(input);
   // Accept:
-  // - "15:53"
-  // - "3:53 pm" / "03:53pm"
+  // - "15:53" / "15:53:00"
+  // - "3:53 pm" / "03:53pm" / "11:41 am"
   // - "12:00 am" / "12:00 pm"
   const m = s.match(/^(\d{1,2}):(\d{2})(?:\s*([ap]m))?$/i);
   if (!m) return null;
