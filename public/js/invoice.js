@@ -31,6 +31,33 @@ function setCustomerAlertText(text) {
   box.classList.toggle('d-none', !text);
 }
 
+const KEY_AVOID_SESSION_KEY = 'invoiceKeyAvoidNextOpen';
+
+/** Rebuild KEY # from /api/keybox/available. When opening a fresh draft, optionally pick lowest key that differs from previousKeyToAvoid (e.g. other tab). */
+async function populateKeySelectFromAvailable({ selectFirstAvailable = false, previousKeyToAvoid = null } = {}) {
+  const keyRes = await fetch('/api/keybox/available');
+  const keySel = document.getElementById('inv-key-number');
+  keySel.innerHTML = '<option value="">No Key</option>';
+  if (!keyRes.ok) return;
+  const keys = await keyRes.json();
+  keys.forEach((k) => {
+    const opt = document.createElement('option');
+    opt.value = k;
+    opt.textContent = `Key ${k}`;
+    keySel.appendChild(opt);
+  });
+  if (!selectFirstAvailable || keys.length === 0) return;
+  const noKeyEl = document.getElementById('inv-no-key');
+  noKeyEl.checked = false;
+  keySel.disabled = false;
+  let pick = keys[0];
+  if (previousKeyToAvoid != null && String(previousKeyToAvoid) !== '') {
+    const alt = keys.find((k) => String(k) !== String(previousKeyToAvoid));
+    if (alt != null) pick = alt;
+  }
+  keySel.value = pick;
+}
+
 async function initInvoicePage() {
   const user = await checkAuth();
   if (!user) return;
@@ -62,25 +89,19 @@ async function initInvoicePage() {
     });
   }
 
-  // Load available keys and auto-select the lowest available one
-  const keyRes = await fetch('/api/keybox/available');
-  if (keyRes.ok) {
-    const keys = await keyRes.json();
-    const keySel = document.getElementById('inv-key-number');
-    keys.forEach(k => {
-      const opt = document.createElement('option');
-      opt.value = k;
-      opt.textContent = `Key ${k}`;
-      keySel.appendChild(opt);
-    });
-    // Auto-select first available key for new invoices
-    if (keys.length > 0 && !new URLSearchParams(window.location.search).get('id')) {
-      keySel.value = keys[0];
-    }
-  }
+  const params = new URLSearchParams(window.location.search);
+  let keyAvoidFromOtherTab = null;
+  try {
+    keyAvoidFromOtherTab = sessionStorage.getItem(KEY_AVOID_SESSION_KEY);
+    sessionStorage.removeItem(KEY_AVOID_SESSION_KEY);
+  } catch (_) {}
+
+  await populateKeySelectFromAvailable({
+    selectFirstAvailable: !params.get('id'),
+    previousKeyToAvoid: keyAvoidFromOtherTab
+  });
 
   // Check URL params for loading existing invoice
-  const params = new URLSearchParams(window.location.search);
   if (params.get('id')) {
     await loadInvoice(null, params.get('id'));
   } else {
@@ -793,17 +814,18 @@ document.getElementById('customer-search').addEventListener('keypress', (e) => {
 });
 
 // New invoice button
-document.getElementById('btn-new-invoice').addEventListener('click', async (e) => {
+document.getElementById('btn-new-invoice').addEventListener('click', (e) => {
   e.preventDefault();
   const btn = document.getElementById('btn-new-invoice');
   if (btn.disabled) return;
-  btn.disabled = true;
+  const noKey = document.getElementById('inv-no-key').checked;
+  const prevKey = noKey ? '' : (document.getElementById('inv-key-number').value || '');
   try {
-    await newInvoice();
-    history.replaceState(null, '', '/invoice.html');
-  } finally {
-    btn.disabled = false;
-  }
+    sessionStorage.setItem(KEY_AVOID_SESSION_KEY, prevKey);
+  } catch (_) {}
+  const w = window.open('/invoice.html', '_blank');
+  if (w) w.opener = null;
+  else showAlert('Popup blocked — allow popups for this site to open a new invoice in a new tab.', 'warning');
 });
 
 // Customer alert modal
