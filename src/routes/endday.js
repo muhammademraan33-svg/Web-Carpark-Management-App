@@ -4,6 +4,11 @@ const { requireAuth } = require('../middleware/auth');
 const { businessDateYmd } = require('../utils/businessDate');
 const router = express.Router();
 
+const SUM_EFTPOS = `(COALESCE(CASE WHEN paid_status = 'Eftpos' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'Eftpos' THEN payment_amount_2 ELSE 0 END, 0))`;
+const SUM_CASH = `(COALESCE(CASE WHEN paid_status = 'Cash' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'Cash' THEN payment_amount_2 ELSE 0 END, 0))`;
+const SUM_ONACC = `(COALESCE(CASE WHEN paid_status = 'OnAcc' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'OnAcc' THEN payment_amount_2 ELSE 0 END, 0))`;
+const PAID_INV_TOTAL = `(${SUM_EFTPOS} + ${SUM_CASH} + ${SUM_ONACC})`;
+
 router.get('/', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
@@ -12,10 +17,10 @@ router.get('/', requireAuth, async (req, res) => {
       SELECT
         COUNT(CASE WHEN DATE(date_in) = ? THEN 1 END) as cars_in,
         COUNT(CASE WHEN DATE(return_date) = ? AND picked_up != 'Car In Yard' THEN 1 END) as cars_out,
-        COALESCE(SUM(CASE WHEN DATE(date_in) = ? AND paid_status='Eftpos' THEN payment_amount ELSE 0 END), 0) as eftpos,
-        COALESCE(SUM(CASE WHEN DATE(date_in) = ? AND paid_status='Cash' THEN payment_amount ELSE 0 END), 0) as cash,
-        COALESCE(SUM(CASE WHEN DATE(date_in) = ? AND paid_status='OnAcc' THEN payment_amount ELSE 0 END), 0) as on_account,
-        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN (payment_amount + payment_amount_2) ELSE 0 END), 0) as total_revenue
+        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN ${SUM_EFTPOS} ELSE 0 END), 0) as eftpos,
+        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN ${SUM_CASH} ELSE 0 END), 0) as cash,
+        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN ${SUM_ONACC} ELSE 0 END), 0) as on_account,
+        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN ${PAID_INV_TOTAL} ELSE 0 END), 0) as total_revenue
       FROM invoices WHERE carpark_id = ? AND void = 0
     `).get(today, today, today, today, today, today, carparkId);
     const carsInYard   = await db.prepare(`SELECT COUNT(*) as count FROM invoices WHERE carpark_id = ? AND void = 0 AND picked_up = 'Car In Yard'`).get(carparkId);
@@ -34,10 +39,10 @@ router.post('/', requireAuth, async (req, res) => {
     const stats = await db.prepare(`
       SELECT
         COUNT(CASE WHEN DATE(date_in) = ? THEN 1 END) as cars_in,
-        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN (payment_amount + payment_amount_2) ELSE 0 END), 0) as total_revenue,
-        COALESCE(SUM(CASE WHEN DATE(date_in) = ? AND paid_status='Eftpos' THEN payment_amount ELSE 0 END), 0) as eftpos,
-        COALESCE(SUM(CASE WHEN DATE(date_in) = ? AND paid_status='Cash' THEN payment_amount ELSE 0 END), 0) as cash,
-        COALESCE(SUM(CASE WHEN DATE(date_in) = ? AND paid_status='OnAcc' THEN payment_amount ELSE 0 END), 0) as on_account
+        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN ${PAID_INV_TOTAL} ELSE 0 END), 0) as total_revenue,
+        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN ${SUM_EFTPOS} ELSE 0 END), 0) as eftpos,
+        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN ${SUM_CASH} ELSE 0 END), 0) as cash,
+        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN ${SUM_ONACC} ELSE 0 END), 0) as on_account
       FROM invoices WHERE carpark_id = ? AND void = 0
     `).get(today, today, today, today, today, carparkId);
     const carsInYard = await db.prepare(`SELECT COUNT(*) as count FROM invoices WHERE carpark_id = ? AND void = 0 AND picked_up = 'Car In Yard'`).get(carparkId);

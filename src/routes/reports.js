@@ -15,6 +15,8 @@ const LT_MONTH = `substr(trim(COALESCE(payment_date,'')), 1, 7)`;
 const SUM_EFTPOS = `(COALESCE(CASE WHEN paid_status = 'Eftpos' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'Eftpos' THEN payment_amount_2 ELSE 0 END, 0))`;
 const SUM_CASH = `(COALESCE(CASE WHEN paid_status = 'Cash' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'Cash' THEN payment_amount_2 ELSE 0 END, 0))`;
 const SUM_ONACC = `(COALESCE(CASE WHEN paid_status = 'OnAcc' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'OnAcc' THEN payment_amount_2 ELSE 0 END, 0))`;
+// Money actually received (excludes "To Pay" rows where payment_amount may mirror total_price but nothing was banked)
+const PAID_INV_TOTAL = `(${SUM_EFTPOS} + ${SUM_CASH} + ${SUM_ONACC})`;
 
 router.get('/revenue', requireAuth, async (req, res) => {
   try {
@@ -31,7 +33,7 @@ router.get('/revenue', requireAuth, async (req, res) => {
 
     const invRevenue = await db.prepare(`
       SELECT ${groupExprInv} as period, COUNT(*) as invoices,
-        COALESCE(SUM(payment_amount + payment_amount_2), 0) as total,
+        COALESCE(SUM(${PAID_INV_TOTAL}), 0) as total,
         COALESCE(SUM(${SUM_EFTPOS}), 0) as eftpos,
         COALESCE(SUM(${SUM_CASH}), 0) as cash,
         COALESCE(SUM(${SUM_ONACC}), 0) as on_account,
@@ -64,7 +66,7 @@ router.get('/revenue', requireAuth, async (req, res) => {
 
     const invSummary = await db.prepare(`
       SELECT COUNT(*) as total_invoices,
-        COALESCE(SUM(payment_amount + payment_amount_2), 0) as total_revenue,
+        COALESCE(SUM(${PAID_INV_TOTAL}), 0) as total_revenue,
         COALESCE(SUM(${SUM_EFTPOS}), 0) as eftpos_total,
         COALESCE(SUM(${SUM_CASH}), 0) as cash_total,
         COALESCE(SUM(${SUM_ONACC}), 0) as on_account_total,
@@ -194,7 +196,7 @@ router.get('/revenue/pdf', requireAuth, async (req, res) => {
     const toDate   = to || today;
     const carpark  = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(carparkId);
     const invSummary  = await db.prepare(`
-      SELECT COUNT(*) as total_invoices, COALESCE(SUM(payment_amount + payment_amount_2), 0) as total_revenue,
+      SELECT COUNT(*) as total_invoices, COALESCE(SUM(${PAID_INV_TOTAL}), 0) as total_revenue,
         COALESCE(SUM(${SUM_EFTPOS}), 0) as eftpos,
         COALESCE(SUM(${SUM_CASH}), 0) as cash,
         COALESCE(SUM(${SUM_ONACC}), 0) as on_account
@@ -211,7 +213,7 @@ router.get('/revenue/pdf', requireAuth, async (req, res) => {
       total_revenue: (invSummary.total_revenue || 0) + (ltSummary.longterm_total || 0),
     };
     const dailyRevenue = await db.prepare(`
-      SELECT ${INV_DAY} as date, COUNT(*) as count, COALESCE(SUM(payment_amount + payment_amount_2), 0) as total
+      SELECT ${INV_DAY} as date, COUNT(*) as count, COALESCE(SUM(${PAID_INV_TOTAL}), 0) as total
       FROM invoices WHERE carpark_id = ? AND void = 0 AND ${INV_DAY} >= ? AND ${INV_DAY} <= ?
       GROUP BY ${INV_DAY} ORDER BY date ASC
     `).all(carparkId, fromDate, toDate);
