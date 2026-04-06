@@ -34,7 +34,7 @@
   console.log('Paid-classified sum (Eftpos+Cash+OnAcc lines):', paid.paid_sum);
   console.log('To Pay rows:', toPayRows.n, '— raw payment fields total (should NOT count as banked):', toPayRows.raw_in_topay);
   if (Number(raw.raw_sum) !== Number(paid.paid_sum) && Number(toPayRows.raw_in_topay) > 0) {
-    console.log('OK: Totals differ where To Pay rows carry payment_amount; reporting uses paid_sum only.');
+    console.log('OK: Totals may differ because "To Pay" rows include payment_amount, while the report sums only paid_sum.');
   }
 
   const tp = await db.prepare(`

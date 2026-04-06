@@ -16,7 +16,7 @@
     "express": "^4.18.3",
     "jsonwebtoken": "^9.0.3",
     "node-cron": "^3.0.3",
-    "nodemailer": "^6.9.13",
+    "nodemailer": "^8.0.4",
     "pdfkit": "^0.15.0",
     "sql.js": "^1.12.0"
   },
