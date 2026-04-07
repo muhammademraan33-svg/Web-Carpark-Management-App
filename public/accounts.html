@@ -266,10 +266,8 @@
       const stmtEl = document.getElementById('account-statement');
       if (data.invoices.length === 0) {
         stmtEl.innerHTML = '<p class="text-muted">No invoices for this period.</p>';
-        return;
-      }
-
-      stmtEl.innerHTML = `
+      } else {
+        stmtEl.innerHTML = `
         <div class="table-responsive">
           <table class="table table-sm table-bordered">
             <thead class="table-light">
@@ -281,7 +279,7 @@
                   <td class="small">${formatDateShort(inv.date_in)} - ${formatDateShort(inv.return_date)}</td>
                   <td>${inv.first_name||''} ${inv.last_name||''}</td>
                   <td class="fw-bold">${inv.rego||''}</td>
-                  <td class="text-success fw-bold">${formatCurrency(inv.payment_amount)}</td>
+                  <td class="text-success fw-bold">${formatCurrency(inv.total_price || 0)}</td>
                   <td>${statusBadge(inv.paid_status)}</td>
                   <td><a href="/invoice.html?id=${inv.id}">#${inv.invoice_number}</a></td>
                 </tr>
@@ -300,6 +298,7 @@
           <i class="bi bi-envelope me-1"></i>Send Account Email
         </a>
       `;
+      }
 
       // Payments summary for the same month/year period
       const paid = Number(data.paid || 0);

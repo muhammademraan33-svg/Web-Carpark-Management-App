@@ -55,16 +55,24 @@ router.get('/:id/statement', requireAuth, async (req, res) => {
     const carparkId = req.session.carparkId || 1;
     const account = await db.prepare('SELECT * FROM account_customers WHERE id = ? AND carpark_id = ?').get(req.params.id, carparkId);
     if (!account) return res.status(404).json({ error: 'Account not found' });
-    const m = String(month || new Date().getMonth() + 1).padStart(2, '0');
-    const y = year || new Date().getFullYear();
+    const today = businessDateYmd();
+    const m = String(month || parseInt(today.slice(5, 7), 10)).padStart(2, '0');
+    const y = parseInt(year || today.slice(0, 4), 10);
     const startDate = `${y}-${m}-01`;
-    const endDate = new Date(y, parseInt(m), 0).toISOString().split('T')[0];
-    const invoices = await db.prepare(`SELECT * FROM invoices WHERE account_customer_id = ? AND void = 0 AND DATE(date_in) >= ? AND DATE(date_in) <= ? ORDER BY date_in ASC`).all(req.params.id, startDate, endDate);
-    const total = invoices.reduce((sum, inv) => sum + (inv.payment_amount || 0), 0);
+    const endDate = `${y}-${m}-${String(new Date(y, parseInt(m, 10), 0).getDate()).padStart(2, '0')}`;
+    const invoices = await db.prepare(`
+      SELECT * FROM invoices
+      WHERE account_customer_id = ? AND void = 0
+        AND substr(trim(COALESCE(date_in,'')),1,10) >= ?
+        AND substr(trim(COALESCE(date_in,'')),1,10) <= ?
+      ORDER BY date_in ASC
+    `).all(req.params.id, startDate, endDate);
+    const total = invoices.reduce((sum, inv) => sum + (parseFloat(inv.total_price || 0) || 0), 0);
     const payments = await db.prepare(`
       SELECT * FROM account_payments
       WHERE carpark_id = ? AND account_customer_id = ?
-        AND DATE(payment_date) >= ? AND DATE(payment_date) <= ?
+        AND substr(trim(COALESCE(payment_date,'')),1,10) >= ?
+        AND substr(trim(COALESCE(payment_date,'')),1,10) <= ?
       ORDER BY payment_date DESC, id DESC
     `).all(carparkId, req.params.id, startDate, endDate);
     const paid = payments.reduce((s, p) => s + (p.amount || 0), 0);
@@ -77,13 +85,14 @@ router.get('/:id/payments', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
     const { from, to } = req.query;
-    const today = new Date().toISOString().split('T')[0];
-    const fromDate = from || new Date(new Date().setDate(1)).toISOString().split('T')[0];
+    const today = businessDateYmd();
+    const fromDate = from || `${today.slice(0, 7)}-01`;
     const toDate   = to || today;
     const payments = await db.prepare(`
       SELECT * FROM account_payments
       WHERE carpark_id = ? AND account_customer_id = ?
-        AND DATE(payment_date) >= ? AND DATE(payment_date) <= ?
+        AND substr(trim(COALESCE(payment_date,'')),1,10) >= ?
+        AND substr(trim(COALESCE(payment_date,'')),1,10) <= ?
       ORDER BY payment_date DESC, id DESC
     `).all(carparkId, req.params.id, fromDate, toDate);
     res.json({ payments, fromDate, toDate });

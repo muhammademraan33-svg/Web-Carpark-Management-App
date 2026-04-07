@@ -331,6 +331,8 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  try { x(`ALTER TABLE invoices ADD COLUMN payment_date_1 DATE`); } catch (_) {}
+  try { x(`ALTER TABLE invoices ADD COLUMN payment_date_2 DATE`); } catch (_) {}
 
   x(`CREATE TABLE IF NOT EXISTS key_box (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

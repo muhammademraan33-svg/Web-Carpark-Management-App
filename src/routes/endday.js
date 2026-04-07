@@ -8,6 +8,8 @@ const SUM_EFTPOS = `(COALESCE(CASE WHEN paid_status = 'Eftpos' THEN payment_amou
 const SUM_CASH = `(COALESCE(CASE WHEN paid_status = 'Cash' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'Cash' THEN payment_amount_2 ELSE 0 END, 0))`;
 const SUM_ONACC = `(COALESCE(CASE WHEN paid_status = 'OnAcc' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'OnAcc' THEN payment_amount_2 ELSE 0 END, 0))`;
 const PAID_INV_TOTAL = `(${SUM_EFTPOS} + ${SUM_CASH} + ${SUM_ONACC})`;
+const PAY1_DAY = `substr(trim(COALESCE(payment_date_1,'')),1,10)`;
+const PAY2_DAY = `substr(trim(COALESCE(payment_date_2,'')),1,10)`;
 
 router.get('/', requireAuth, async (req, res) => {
   try {
@@ -17,12 +19,24 @@ router.get('/', requireAuth, async (req, res) => {
       SELECT
         COUNT(CASE WHEN DATE(date_in) = ? THEN 1 END) as cars_in,
         COUNT(CASE WHEN DATE(return_date) = ? AND picked_up != 'Car In Yard' THEN 1 END) as cars_out,
-        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN ${SUM_EFTPOS} ELSE 0 END), 0) as eftpos,
-        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN ${SUM_CASH} ELSE 0 END), 0) as cash,
-        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN ${SUM_ONACC} ELSE 0 END), 0) as on_account,
-        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN ${PAID_INV_TOTAL} ELSE 0 END), 0) as total_revenue
+        COALESCE(SUM(
+          COALESCE(CASE WHEN ${PAY1_DAY} = ? AND paid_status = 'Eftpos' THEN payment_amount ELSE 0 END, 0) +
+          COALESCE(CASE WHEN ${PAY2_DAY} = ? AND paid_status_2 = 'Eftpos' THEN payment_amount_2 ELSE 0 END, 0)
+        ), 0) as eftpos,
+        COALESCE(SUM(
+          COALESCE(CASE WHEN ${PAY1_DAY} = ? AND paid_status = 'Cash' THEN payment_amount ELSE 0 END, 0) +
+          COALESCE(CASE WHEN ${PAY2_DAY} = ? AND paid_status_2 = 'Cash' THEN payment_amount_2 ELSE 0 END, 0)
+        ), 0) as cash,
+        COALESCE(SUM(
+          COALESCE(CASE WHEN ${PAY1_DAY} = ? AND paid_status = 'OnAcc' THEN payment_amount ELSE 0 END, 0) +
+          COALESCE(CASE WHEN ${PAY2_DAY} = ? AND paid_status_2 = 'OnAcc' THEN payment_amount_2 ELSE 0 END, 0)
+        ), 0) as on_account,
+        COALESCE(SUM(
+          COALESCE(CASE WHEN ${PAY1_DAY} = ? AND paid_status != 'To Pay' THEN payment_amount ELSE 0 END, 0) +
+          COALESCE(CASE WHEN ${PAY2_DAY} = ? AND paid_status_2 != 'To Pay' THEN payment_amount_2 ELSE 0 END, 0)
+        ), 0) as total_revenue
       FROM invoices WHERE carpark_id = ? AND void = 0
-    `).get(today, today, today, today, today, today, carparkId);
+    `).get(today, today, today, today, today, today, today, today, today, today, carparkId);
     const carsInYard   = await db.prepare(`SELECT COUNT(*) as count FROM invoices WHERE carpark_id = ? AND void = 0 AND picked_up = 'Car In Yard'`).get(carparkId);
     const invoices     = await db.prepare(`SELECT i.*, u.name as staff_name FROM invoices i LEFT JOIN users u ON i.staff_id = u.id WHERE i.carpark_id = ? AND DATE(i.date_in) = ? AND i.void = 0 ORDER BY i.time_in`).all(carparkId, today);
     const returningToday = await db.prepare(`SELECT i.*, u.name as staff_name FROM invoices i LEFT JOIN users u ON i.staff_id = u.id WHERE i.carpark_id = ? AND DATE(i.return_date) = ? AND i.void = 0 AND i.picked_up != 'Car In Yard' ORDER BY i.return_time`).all(carparkId, today);
@@ -39,12 +53,24 @@ router.post('/', requireAuth, async (req, res) => {
     const stats = await db.prepare(`
       SELECT
         COUNT(CASE WHEN DATE(date_in) = ? THEN 1 END) as cars_in,
-        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN ${PAID_INV_TOTAL} ELSE 0 END), 0) as total_revenue,
-        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN ${SUM_EFTPOS} ELSE 0 END), 0) as eftpos,
-        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN ${SUM_CASH} ELSE 0 END), 0) as cash,
-        COALESCE(SUM(CASE WHEN DATE(date_in) = ? THEN ${SUM_ONACC} ELSE 0 END), 0) as on_account
+        COALESCE(SUM(
+          COALESCE(CASE WHEN ${PAY1_DAY} = ? AND paid_status != 'To Pay' THEN payment_amount ELSE 0 END, 0) +
+          COALESCE(CASE WHEN ${PAY2_DAY} = ? AND paid_status_2 != 'To Pay' THEN payment_amount_2 ELSE 0 END, 0)
+        ), 0) as total_revenue,
+        COALESCE(SUM(
+          COALESCE(CASE WHEN ${PAY1_DAY} = ? AND paid_status = 'Eftpos' THEN payment_amount ELSE 0 END, 0) +
+          COALESCE(CASE WHEN ${PAY2_DAY} = ? AND paid_status_2 = 'Eftpos' THEN payment_amount_2 ELSE 0 END, 0)
+        ), 0) as eftpos,
+        COALESCE(SUM(
+          COALESCE(CASE WHEN ${PAY1_DAY} = ? AND paid_status = 'Cash' THEN payment_amount ELSE 0 END, 0) +
+          COALESCE(CASE WHEN ${PAY2_DAY} = ? AND paid_status_2 = 'Cash' THEN payment_amount_2 ELSE 0 END, 0)
+        ), 0) as cash,
+        COALESCE(SUM(
+          COALESCE(CASE WHEN ${PAY1_DAY} = ? AND paid_status = 'OnAcc' THEN payment_amount ELSE 0 END, 0) +
+          COALESCE(CASE WHEN ${PAY2_DAY} = ? AND paid_status_2 = 'OnAcc' THEN payment_amount_2 ELSE 0 END, 0)
+        ), 0) as on_account
       FROM invoices WHERE carpark_id = ? AND void = 0
-    `).get(today, today, today, today, today, carparkId);
+    `).get(today, today, today, today, today, today, today, today, today, carparkId);
     const carsInYard = await db.prepare(`SELECT COUNT(*) as count FROM invoices WHERE carpark_id = ? AND void = 0 AND picked_up = 'Car In Yard'`).get(carparkId);
     const existing = await db.prepare('SELECT id FROM end_day WHERE carpark_id = ? AND date = ?').get(carparkId, today);
     if (existing) {

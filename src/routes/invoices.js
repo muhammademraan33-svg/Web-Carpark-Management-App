@@ -2,6 +2,7 @@ const express = require('express');
 const { db } = require('../database');
 const { requireAuth } = require('../middleware/auth');
 const { releaseKey, syncKeyBoxForPickedUp } = require('../utils/keyBoxSync');
+const { businessDateYmd } = require('../utils/businessDate');
 const PDFDocument = require('pdfkit');
 const router = express.Router();
 
@@ -55,6 +56,12 @@ function deriveStayNights24h(dateIn, timeIn, returnDate, returnTime, fallback = 
   const t2 = Date.UTC(y2, m2 - 1, d2);
   const diffDays = Math.round((t2 - t1) / (1000 * 60 * 60 * 24));
   return diffDays <= 0 ? 1 : diffDays;
+}
+
+function isPaidLine(statusRaw, amountRaw) {
+  const status = String(statusRaw || '').trim();
+  const amount = parseFloat(amountRaw || 0) || 0;
+  return amount > 0 && status && status !== 'To Pay';
 }
 
 // GET /api/invoices/calculate-price  – MUST be before /:id
@@ -249,6 +256,9 @@ router.post('/', requireAuth, async (req, res) => {
 
     const finalPickedUp = picked_up || 'Car In Yard';
     const computedStayNights = deriveStayNights24h(date_in, time_in, return_date, return_time, stay_nights);
+    const today = businessDateYmd();
+    const paymentDate1 = isPaidLine(paid_status, payment_amount) ? today : null;
+    const paymentDate2 = isPaidLine(paid_status_2, payment_amount_2) ? today : null;
 
     const result = await db.prepare(`
       INSERT INTO invoices (
@@ -257,8 +267,9 @@ router.post('/', requireAuth, async (req, res) => {
         date_in, time_in, return_date, return_time, stay_nights,
         flight_info, flight_type, total_price, credit_applied, discount_percent,
         paid_status, payment_amount, payment_method, paid_status_2, payment_amount_2, payment_method_2,
+        payment_date_1, payment_date_2,
         do_not_move, picked_up, staff_id, notes, customer_alert
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       invoice_number, carparkId, customer_id || null, account_customer_id || null, key_number || null, no_key ? 1 : 0,
       rego, first_name, last_name, phone, email,
@@ -266,6 +277,7 @@ router.post('/', requireAuth, async (req, res) => {
       flight_info, flight_type || 'Standard - On Flight', total_price || 0, credit_applied || 0, discount_percent || 0,
       paid_status || 'To Pay', payment_amount || 0, payment_method,
       paid_status_2 || null, payment_amount_2 || 0, payment_method_2 || null,
+      paymentDate1, paymentDate2,
       do_not_move ? 1 : 0, finalPickedUp, staff_id || req.session.userId, notes, customer_alert
     );
 
@@ -302,6 +314,13 @@ router.put('/:id', requireAuth, async (req, res) => {
 
     const finalPickedUp = picked_up || 'Car In Yard';
     const computedStayNights = deriveStayNights24h(date_in, time_in, return_date, return_time, stay_nights);
+    const today = businessDateYmd();
+    const nextPaymentDate1 = isPaidLine(paid_status, payment_amount)
+      ? (existing.payment_date_1 || today)
+      : null;
+    const nextPaymentDate2 = isPaidLine(paid_status_2, payment_amount_2)
+      ? (existing.payment_date_2 || today)
+      : null;
 
     await db.prepare(`
       UPDATE invoices SET
@@ -310,6 +329,7 @@ router.put('/:id', requireAuth, async (req, res) => {
         stay_nights = ?, flight_info = ?, flight_type = ?, total_price = ?,
         credit_applied = ?, discount_percent = ?, paid_status = ?, payment_amount = ?,
         payment_method = ?, paid_status_2 = ?, payment_amount_2 = ?, payment_method_2 = ?,
+        payment_date_1 = ?, payment_date_2 = ?,
         do_not_move = ?, picked_up = ?, staff_id = ?, notes = ?, customer_alert = ?,
         account_customer_id = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND carpark_id = ?
@@ -319,6 +339,7 @@ router.put('/:id', requireAuth, async (req, res) => {
       computedStayNights, flight_info, flight_type || 'Standard - On Flight', total_price || 0,
       credit_applied || 0, discount_percent || 0, paid_status || 'To Pay', payment_amount || 0,
       payment_method, paid_status_2 || null, payment_amount_2 || 0, payment_method_2 || null,
+      nextPaymentDate1, nextPaymentDate2,
       do_not_move ? 1 : 0, finalPickedUp, staff_id || req.session.userId, notes, customer_alert,
       account_customer_id || null, id, carparkId
     );

@@ -36,18 +36,23 @@ router.post('/', requireAuth, async (req, res) => {
 });
 
 // GET /api/banking/autofill?date=YYYY-MM-DD
-// Builds banking fields directly from invoice payment lines:
-// - payment 1: paid_status + payment_amount
-// - payment 2: paid_status_2 + payment_amount_2
+// Builds banking fields from invoice payment lines posted on the selected date.
+// payment_date_1/payment_date_2 are set when a "To Pay" line becomes a real payment.
 router.get('/autofill', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
     const date = req.query.date || new Date().toISOString().split('T')[0];
     const rows = await db.prepare(`
-      SELECT paid_status, payment_amount, paid_status_2, payment_amount_2
+      SELECT
+        paid_status, payment_amount, payment_date_1,
+        paid_status_2, payment_amount_2, payment_date_2
       FROM invoices
-      WHERE carpark_id = ? AND DATE(date_in) = ? AND void = 0
-    `).all(carparkId, date);
+      WHERE carpark_id = ? AND void = 0
+        AND (
+          substr(trim(COALESCE(payment_date_1,'')),1,10) = ?
+          OR substr(trim(COALESCE(payment_date_2,'')),1,10) = ?
+        )
+    `).all(carparkId, date, date);
 
     let eftpos = 0;
     let cash = 0;
@@ -64,9 +69,14 @@ router.get('/autofill', requireAuth, async (req, res) => {
       else if (status && status !== 'To Pay') other += amount;
     };
 
+    const day = String(date).trim();
     for (const r of rows) {
-      addByStatus(r.paid_status, r.payment_amount);
-      addByStatus(r.paid_status_2, r.payment_amount_2);
+      if (String(r.payment_date_1 || '').trim().slice(0, 10) === day) {
+        addByStatus(r.paid_status, r.payment_amount);
+      }
+      if (String(r.payment_date_2 || '').trim().slice(0, 10) === day) {
+        addByStatus(r.paid_status_2, r.payment_amount_2);
+      }
     }
 
     const round2 = (n) => Math.round((n || 0) * 100) / 100;
