@@ -19,6 +19,7 @@
 
     <div class="alert alert-secondary small mb-3">
       Company accounts are matched on the <strong>Invoice</strong> page automatically by your existing customer/account links.
+      <strong>Total balance</strong> is all-time invoiced minus all payments recorded here.
     </div>
 
     <div class="table-container">
@@ -34,11 +35,12 @@
               <th>Discount</th>
               <th>Credit Balance</th>
               <th>This month</th>
+              <th>Total balance</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody id="accounts-tbody">
-            <tr><td colspan="9" class="text-center"><div class="spinner-border spinner-border-sm"></div></td></tr>
+            <tr><td colspan="10" class="text-center"><div class="spinner-border spinner-border-sm"></div></td></tr>
           </tbody>
         </table>
       </div>
@@ -87,6 +89,7 @@
             <div class="col-md-3">
               <label class="form-label">Payment date</label>
               <input type="date" class="form-control form-control-sm" id="acct-pay-date">
+              <div class="form-text small">Defaults to the month you’re viewing.</div>
             </div>
             <div class="col-md-3">
               <label class="form-label">Method</label>
@@ -110,10 +113,10 @@
           <div class="table-responsive">
             <table class="table table-sm table-bordered mb-0">
               <thead class="table-light">
-                <tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th></tr>
+                <tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th class="text-end"></th></tr>
               </thead>
               <tbody id="acct-payments-tbody">
-                <tr><td colspan="4" class="text-center text-muted small">No payments recorded for this period.</td></tr>
+                <tr><td colspan="5" class="text-center text-muted small">No payments recorded for this period.</td></tr>
               </tbody>
             </table>
           </div>
@@ -196,7 +199,7 @@
       const tbody = document.getElementById('accounts-tbody');
 
       if (accounts.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">No account customers yet</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted">No account customers yet</td></tr>';
         return;
       }
 
@@ -212,6 +215,9 @@
           <td class="small">${a.month_payment_status === 'Outstanding'
             ? `<span class="badge bg-warning text-dark">Outstanding ${formatCurrency(a.month_outstanding || 0)}</span>`
             : (a.month_payment_status === 'Paid' ? '<span class="badge bg-success">Paid</span>' : '—')}</td>
+          <td class="small">${a.balance_payment_status === 'Outstanding'
+            ? `<span class="badge bg-danger">Owing ${formatCurrency(a.balance_outstanding || 0)}</span>`
+            : (a.balance_payment_status === 'Paid' ? '<span class="badge bg-success">Clear</span>' : '—')}</td>
           <td>
             <div class="d-flex gap-1">
               <button class="btn btn-action btn-warning btn-edit" data-id="${a.id}">Edit</button>
@@ -253,6 +259,29 @@
       document.getElementById('account-detail').classList.remove('d-none');
       document.getElementById('account-detail').scrollIntoView({ behavior: 'smooth' });
       loadStatement();
+    }
+
+    /** Default payment date to match the statement month (avoids April when paying March). */
+    function applyStatementPaymentDateDefault() {
+      const year = parseInt(document.getElementById('detail-year').value, 10);
+      const month = parseInt(document.getElementById('detail-month').value, 10);
+      const el = document.getElementById('acct-pay-date');
+      if (!el || !Number.isFinite(year) || !Number.isFinite(month)) return;
+      const now = new Date();
+      const cy = now.getFullYear();
+      const cm = now.getMonth() + 1;
+      const cd = now.getDate();
+      const todayStr = `${cy}-${String(cm).padStart(2, '0')}-${String(cd).padStart(2, '0')}`;
+      const lastDay = new Date(year, month, 0).getDate();
+      const monthEndStr = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      const monthStartStr = `${year}-${String(month).padStart(2, '0')}-01`;
+      if (year === cy && month === cm) {
+        el.value = todayStr;
+        return;
+      }
+      const t0 = new Date(year, month - 1, 1).getTime();
+      const t1 = new Date(cy, cm - 1, cd).getTime();
+      el.value = t0 < t1 ? monthEndStr : monthStartStr;
     }
 
     async function loadStatement() {
@@ -315,21 +344,30 @@
             <td class="fw-bold text-success">${formatCurrency(p.amount || 0)}</td>
             <td class="small">${p.payment_method || ''}</td>
             <td class="small">${p.transaction_reference || ''}</td>
+            <td class="text-end">
+              <button type="button" class="btn btn-sm btn-outline-danger btn-delete-acct-payment" data-id="${p.id}" title="Delete payment"><i class="bi bi-trash"></i></button>
+            </td>
           </tr>
         `).join('')
-        : '<tr><td colspan="4" class="text-center text-muted small">No payments recorded for this period.</td></tr>';
+        : '<tr><td colspan="5" class="text-center text-muted small">No payments recorded for this period.</td></tr>';
+
+      pt.querySelectorAll('.btn-delete-acct-payment').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const pid = btn.dataset.id;
+          if (!pid || !confirm('Remove this payment entry?')) return;
+          const del = await fetch(`/api/accounts/${currentAccountId}/payments/${pid}`, { method: 'DELETE' });
+          const err = await del.json().catch(() => ({}));
+          if (!del.ok) { showAlert(err.error || 'Could not delete payment', 'danger'); return; }
+          showAlert('Payment removed', 'success');
+          await loadStatement();
+          await loadAccounts();
+        });
+      });
+
+      applyStatementPaymentDateDefault();
     }
 
     document.getElementById('btn-load-statement').addEventListener('click', loadStatement);
-
-    function setAccountPaymentDefaults() {
-      const now = new Date();
-      const y = now.getFullYear();
-      const m = String(now.getMonth() + 1).padStart(2, '0');
-      const d = String(now.getDate()).padStart(2, '0');
-      const el = document.getElementById('acct-pay-date');
-      if (el && !el.value) el.value = `${y}-${m}-${d}`;
-    }
 
     document.getElementById('btn-add-acct-payment').addEventListener('click', async () => {
       if (!currentAccountId) return;
@@ -350,6 +388,7 @@
       document.getElementById('acct-pay-amount').value = '';
       document.getElementById('acct-pay-ref').value = '';
       await loadStatement();
+      await loadAccounts();
     });
 
     document.getElementById('btn-new-acct').addEventListener('click', () => {
@@ -392,7 +431,7 @@
       if (res.ok) {
         showAlert(id ? 'Account updated' : 'Account created', 'success');
         bootstrap.Modal.getInstance('#acctModal').hide();
-        loadAccounts();
+        await loadAccounts();
       } else {
         const err = await res.json();
         showAlert(err.error || 'Error', 'danger');
@@ -412,7 +451,6 @@
       await checkAuth();
       await loadAccounts();
       updateNavCarsCount();
-      setAccountPaymentDefaults();
     }
     init();
   </script>

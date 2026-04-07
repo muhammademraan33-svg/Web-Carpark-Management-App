@@ -16,12 +16,16 @@ router.get('/', requireAuth, async (req, res) => {
 
     const accounts = await db.prepare(`
       SELECT a.*,
-        (SELECT COALESCE(SUM(COALESCE(i.payment_amount,0)+COALESCE(i.payment_amount_2,0)),0) FROM invoices i
+        (SELECT COALESCE(SUM(COALESCE(i.total_price,0)),0) FROM invoices i
          WHERE i.account_customer_id = a.id AND i.carpark_id = a.carpark_id AND i.void = 0
          AND substr(trim(COALESCE(i.date_in,'')),1,10) >= ? AND substr(trim(COALESCE(i.date_in,'')),1,10) <= ?) AS month_billed,
         (SELECT COALESCE(SUM(p.amount),0) FROM account_payments p
          WHERE p.account_customer_id = a.id AND p.carpark_id = a.carpark_id
-         AND substr(trim(COALESCE(p.payment_date,'')),1,10) >= ? AND substr(trim(COALESCE(p.payment_date,'')),1,10) <= ?) AS month_paid
+         AND substr(trim(COALESCE(p.payment_date,'')),1,10) >= ? AND substr(trim(COALESCE(p.payment_date,'')),1,10) <= ?) AS month_paid,
+        (SELECT COALESCE(SUM(COALESCE(i.total_price,0)),0) FROM invoices i
+         WHERE i.account_customer_id = a.id AND i.carpark_id = a.carpark_id AND i.void = 0) AS lifetime_billed,
+        (SELECT COALESCE(SUM(p.amount),0) FROM account_payments p
+         WHERE p.account_customer_id = a.id AND p.carpark_id = a.carpark_id) AS lifetime_paid
       FROM account_customers a
       WHERE a.carpark_id = ? AND a.active = 1 ORDER BY a.company_name
     `).all(monthStart, monthEnd, monthStart, monthEnd, carparkId);
@@ -30,10 +34,15 @@ router.get('/', requireAuth, async (req, res) => {
       const billed = parseFloat(a.month_billed) || 0;
       const paid = parseFloat(a.month_paid) || 0;
       const out = Math.round((billed - paid) * 100) / 100;
+      const lifeBilled = parseFloat(a.lifetime_billed) || 0;
+      const lifePaid = parseFloat(a.lifetime_paid) || 0;
+      const balanceOut = Math.round((lifeBilled - lifePaid) * 100) / 100;
       return {
         ...a,
         month_outstanding: out,
         month_payment_status: billed <= 0 ? '—' : (out <= 0.01 ? 'Paid' : 'Outstanding'),
+        balance_outstanding: balanceOut,
+        balance_payment_status: lifeBilled <= 0 ? '—' : (balanceOut <= 0.01 ? 'Paid' : 'Outstanding'),
       };
     });
     res.json(rows);
@@ -106,11 +115,26 @@ router.post('/:id/payments', requireAuth, async (req, res) => {
     const amt = parseFloat(amount);
     if (!payment_date) return res.status(400).json({ error: 'payment_date is required' });
     if (!Number.isFinite(amt) || amt <= 0) return res.status(400).json({ error: 'amount must be > 0' });
-    await db.prepare(`
+    const result = await db.prepare(`
       INSERT INTO account_payments (carpark_id, account_customer_id, payment_date, amount, payment_method, transaction_reference, notes)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(carparkId, req.params.id, payment_date, amt, payment_method || null, transaction_reference || null, notes || null);
-    res.status(201).json({ success: true });
+    res.status(201).json({ success: true, id: result.lastInsertRowid });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.delete('/:id/payments/:paymentId', requireAuth, async (req, res) => {
+  try {
+    const carparkId = req.session.carparkId || 1;
+    const accountId = req.params.id;
+    const paymentId = req.params.paymentId;
+    const row = await db.prepare(`
+      SELECT id FROM account_payments
+      WHERE id = ? AND carpark_id = ? AND account_customer_id = ?
+    `).get(paymentId, carparkId, accountId);
+    if (!row) return res.status(404).json({ error: 'Payment not found' });
+    await db.prepare('DELETE FROM account_payments WHERE id = ?').run(paymentId);
+    res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
