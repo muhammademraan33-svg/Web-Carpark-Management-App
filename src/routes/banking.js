@@ -1,6 +1,7 @@
 const express = require('express');
 const { db } = require('../database');
 const { requireAuth } = require('../middleware/auth');
+const { EFFECTIVE_PAY1_DAY, EFFECTIVE_PAY2_DAY } = require('../utils/invoicePaymentDates');
 const router = express.Router();
 
 router.get('/', requireAuth, async (req, res) => {
@@ -44,13 +45,13 @@ router.get('/autofill', requireAuth, async (req, res) => {
     const date = req.query.date || new Date().toISOString().split('T')[0];
     const rows = await db.prepare(`
       SELECT
-        paid_status, payment_amount, payment_date_1,
+        paid_status, payment_amount, payment_date_1, date_in,
         paid_status_2, payment_amount_2, payment_date_2
       FROM invoices
       WHERE carpark_id = ? AND void = 0
         AND (
-          substr(trim(COALESCE(payment_date_1,'')),1,10) = ?
-          OR substr(trim(COALESCE(payment_date_2,'')),1,10) = ?
+          (${EFFECTIVE_PAY1_DAY}) = ?
+          OR ((${EFFECTIVE_PAY2_DAY}) IS NOT NULL AND (${EFFECTIVE_PAY2_DAY}) = ?)
         )
     `).all(carparkId, date, date);
 
@@ -70,13 +71,22 @@ router.get('/autofill', requireAuth, async (req, res) => {
     };
 
     const day = String(date).trim();
+    const eff1 = (r) => {
+      const p = String(r.payment_date_1 || '').trim().slice(0, 10);
+      if (p) return p;
+      return String(r.date_in || '').trim().slice(0, 10);
+    };
+    const eff2 = (r) => {
+      const a2 = parseFloat(r.payment_amount_2 || 0) || 0;
+      const s2 = String(r.paid_status_2 || '').trim();
+      if (a2 <= 0 || !s2 || s2 === 'To Pay') return '';
+      const p = String(r.payment_date_2 || '').trim().slice(0, 10);
+      if (p) return p;
+      return String(r.date_in || '').trim().slice(0, 10);
+    };
     for (const r of rows) {
-      if (String(r.payment_date_1 || '').trim().slice(0, 10) === day) {
-        addByStatus(r.paid_status, r.payment_amount);
-      }
-      if (String(r.payment_date_2 || '').trim().slice(0, 10) === day) {
-        addByStatus(r.paid_status_2, r.payment_amount_2);
-      }
+      if (eff1(r) === day) addByStatus(r.paid_status, r.payment_amount);
+      if (eff2(r) === day) addByStatus(r.paid_status_2, r.payment_amount_2);
     }
 
     const round2 = (n) => Math.round((n || 0) * 100) / 100;

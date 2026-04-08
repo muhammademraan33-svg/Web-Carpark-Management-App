@@ -2,14 +2,8 @@ const express = require('express');
 const { db } = require('../database');
 const { requireAuth } = require('../middleware/auth');
 const { businessDateYmd } = require('../utils/businessDate');
+const { EFFECTIVE_PAY1_DAY, EFFECTIVE_PAY2_DAY } = require('../utils/invoicePaymentDates');
 const router = express.Router();
-
-const SUM_EFTPOS = `(COALESCE(CASE WHEN paid_status = 'Eftpos' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'Eftpos' THEN payment_amount_2 ELSE 0 END, 0))`;
-const SUM_CASH = `(COALESCE(CASE WHEN paid_status = 'Cash' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'Cash' THEN payment_amount_2 ELSE 0 END, 0))`;
-const SUM_ONACC = `(COALESCE(CASE WHEN paid_status = 'OnAcc' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'OnAcc' THEN payment_amount_2 ELSE 0 END, 0))`;
-const PAID_INV_TOTAL = `(${SUM_EFTPOS} + ${SUM_CASH} + ${SUM_ONACC})`;
-const PAY1_DAY = `substr(trim(COALESCE(payment_date_1,'')),1,10)`;
-const PAY2_DAY = `substr(trim(COALESCE(payment_date_2,'')),1,10)`;
 
 router.get('/', requireAuth, async (req, res) => {
   try {
@@ -20,20 +14,20 @@ router.get('/', requireAuth, async (req, res) => {
         COUNT(CASE WHEN DATE(date_in) = ? THEN 1 END) as cars_in,
         COUNT(CASE WHEN DATE(return_date) = ? AND picked_up != 'Car In Yard' THEN 1 END) as cars_out,
         COALESCE(SUM(
-          COALESCE(CASE WHEN ${PAY1_DAY} = ? AND paid_status = 'Eftpos' THEN payment_amount ELSE 0 END, 0) +
-          COALESCE(CASE WHEN ${PAY2_DAY} = ? AND paid_status_2 = 'Eftpos' THEN payment_amount_2 ELSE 0 END, 0)
+          COALESCE(CASE WHEN (${EFFECTIVE_PAY1_DAY}) = ? AND paid_status = 'Eftpos' THEN payment_amount ELSE 0 END, 0) +
+          COALESCE(CASE WHEN (${EFFECTIVE_PAY2_DAY}) IS NOT NULL AND (${EFFECTIVE_PAY2_DAY}) = ? AND paid_status_2 = 'Eftpos' THEN payment_amount_2 ELSE 0 END, 0)
         ), 0) as eftpos,
         COALESCE(SUM(
-          COALESCE(CASE WHEN ${PAY1_DAY} = ? AND paid_status = 'Cash' THEN payment_amount ELSE 0 END, 0) +
-          COALESCE(CASE WHEN ${PAY2_DAY} = ? AND paid_status_2 = 'Cash' THEN payment_amount_2 ELSE 0 END, 0)
+          COALESCE(CASE WHEN (${EFFECTIVE_PAY1_DAY}) = ? AND paid_status = 'Cash' THEN payment_amount ELSE 0 END, 0) +
+          COALESCE(CASE WHEN (${EFFECTIVE_PAY2_DAY}) IS NOT NULL AND (${EFFECTIVE_PAY2_DAY}) = ? AND paid_status_2 = 'Cash' THEN payment_amount_2 ELSE 0 END, 0)
         ), 0) as cash,
         COALESCE(SUM(
-          COALESCE(CASE WHEN ${PAY1_DAY} = ? AND paid_status = 'OnAcc' THEN payment_amount ELSE 0 END, 0) +
-          COALESCE(CASE WHEN ${PAY2_DAY} = ? AND paid_status_2 = 'OnAcc' THEN payment_amount_2 ELSE 0 END, 0)
+          COALESCE(CASE WHEN (${EFFECTIVE_PAY1_DAY}) = ? AND paid_status = 'OnAcc' THEN payment_amount ELSE 0 END, 0) +
+          COALESCE(CASE WHEN (${EFFECTIVE_PAY2_DAY}) IS NOT NULL AND (${EFFECTIVE_PAY2_DAY}) = ? AND paid_status_2 = 'OnAcc' THEN payment_amount_2 ELSE 0 END, 0)
         ), 0) as on_account,
         COALESCE(SUM(
-          COALESCE(CASE WHEN ${PAY1_DAY} = ? AND paid_status != 'To Pay' THEN payment_amount ELSE 0 END, 0) +
-          COALESCE(CASE WHEN ${PAY2_DAY} = ? AND paid_status_2 != 'To Pay' THEN payment_amount_2 ELSE 0 END, 0)
+          COALESCE(CASE WHEN (${EFFECTIVE_PAY1_DAY}) = ? AND paid_status != 'To Pay' THEN payment_amount ELSE 0 END, 0) +
+          COALESCE(CASE WHEN (${EFFECTIVE_PAY2_DAY}) IS NOT NULL AND (${EFFECTIVE_PAY2_DAY}) = ? AND paid_status_2 != 'To Pay' THEN payment_amount_2 ELSE 0 END, 0)
         ), 0) as total_revenue
       FROM invoices WHERE carpark_id = ? AND void = 0
     `).get(today, today, today, today, today, today, today, today, today, today, carparkId);
@@ -54,20 +48,20 @@ router.post('/', requireAuth, async (req, res) => {
       SELECT
         COUNT(CASE WHEN DATE(date_in) = ? THEN 1 END) as cars_in,
         COALESCE(SUM(
-          COALESCE(CASE WHEN ${PAY1_DAY} = ? AND paid_status != 'To Pay' THEN payment_amount ELSE 0 END, 0) +
-          COALESCE(CASE WHEN ${PAY2_DAY} = ? AND paid_status_2 != 'To Pay' THEN payment_amount_2 ELSE 0 END, 0)
+          COALESCE(CASE WHEN (${EFFECTIVE_PAY1_DAY}) = ? AND paid_status != 'To Pay' THEN payment_amount ELSE 0 END, 0) +
+          COALESCE(CASE WHEN (${EFFECTIVE_PAY2_DAY}) IS NOT NULL AND (${EFFECTIVE_PAY2_DAY}) = ? AND paid_status_2 != 'To Pay' THEN payment_amount_2 ELSE 0 END, 0)
         ), 0) as total_revenue,
         COALESCE(SUM(
-          COALESCE(CASE WHEN ${PAY1_DAY} = ? AND paid_status = 'Eftpos' THEN payment_amount ELSE 0 END, 0) +
-          COALESCE(CASE WHEN ${PAY2_DAY} = ? AND paid_status_2 = 'Eftpos' THEN payment_amount_2 ELSE 0 END, 0)
+          COALESCE(CASE WHEN (${EFFECTIVE_PAY1_DAY}) = ? AND paid_status = 'Eftpos' THEN payment_amount ELSE 0 END, 0) +
+          COALESCE(CASE WHEN (${EFFECTIVE_PAY2_DAY}) IS NOT NULL AND (${EFFECTIVE_PAY2_DAY}) = ? AND paid_status_2 = 'Eftpos' THEN payment_amount_2 ELSE 0 END, 0)
         ), 0) as eftpos,
         COALESCE(SUM(
-          COALESCE(CASE WHEN ${PAY1_DAY} = ? AND paid_status = 'Cash' THEN payment_amount ELSE 0 END, 0) +
-          COALESCE(CASE WHEN ${PAY2_DAY} = ? AND paid_status_2 = 'Cash' THEN payment_amount_2 ELSE 0 END, 0)
+          COALESCE(CASE WHEN (${EFFECTIVE_PAY1_DAY}) = ? AND paid_status = 'Cash' THEN payment_amount ELSE 0 END, 0) +
+          COALESCE(CASE WHEN (${EFFECTIVE_PAY2_DAY}) IS NOT NULL AND (${EFFECTIVE_PAY2_DAY}) = ? AND paid_status_2 = 'Cash' THEN payment_amount_2 ELSE 0 END, 0)
         ), 0) as cash,
         COALESCE(SUM(
-          COALESCE(CASE WHEN ${PAY1_DAY} = ? AND paid_status = 'OnAcc' THEN payment_amount ELSE 0 END, 0) +
-          COALESCE(CASE WHEN ${PAY2_DAY} = ? AND paid_status_2 = 'OnAcc' THEN payment_amount_2 ELSE 0 END, 0)
+          COALESCE(CASE WHEN (${EFFECTIVE_PAY1_DAY}) = ? AND paid_status = 'OnAcc' THEN payment_amount ELSE 0 END, 0) +
+          COALESCE(CASE WHEN (${EFFECTIVE_PAY2_DAY}) IS NOT NULL AND (${EFFECTIVE_PAY2_DAY}) = ? AND paid_status_2 = 'OnAcc' THEN payment_amount_2 ELSE 0 END, 0)
         ), 0) as on_account
       FROM invoices WHERE carpark_id = ? AND void = 0
     `).get(today, today, today, today, today, today, today, today, today, carparkId);

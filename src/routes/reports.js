@@ -2,21 +2,67 @@ const express = require('express');
 const { db } = require('../database');
 const { requireAuth } = require('../middleware/auth');
 const { businessDateYmd } = require('../utils/businessDate');
+const {
+  invDay,
+  effectivePay1Day,
+  effectivePay2Day,
+  l1PaidTotal,
+  l2PaidTotal,
+  l1Eftpos,
+  l2Eftpos,
+  l1Cash,
+  l2Cash,
+  l1OnAcc,
+  l2OnAcc,
+  sumBothLinesInRange,
+  EFFECTIVE_PAY1_DAY,
+  EFFECTIVE_PAY2_DAY,
+  L1_PAID_TOTAL,
+  L2_PAID_TOTAL,
+  L1_EFTPOS,
+  L2_EFTPOS,
+  L1_CASH,
+  L2_CASH,
+  L1_ONACC,
+  L2_ONACC,
+} = require('../utils/invoicePaymentDates');
 const PDFDocument = require('pdfkit');
 const router = express.Router();
 
 // Calendar date from stored values (handles YYYY-MM-DD and ISO timestamps; avoids SQLite DATE() quirks on some rows)
-const INV_DAY = `substr(trim(COALESCE(date_in,'')), 1, 10)`;
+const INV_DAY = invDay();
 const RET_DAY = `substr(trim(COALESCE(return_date,'')), 1, 10)`;
 const LT_DAY = `substr(trim(COALESCE(payment_date,'')), 1, 10)`;
 const INV_MONTH = `substr(trim(COALESCE(date_in,'')), 1, 7)`;
 const LT_MONTH = `substr(trim(COALESCE(payment_date,'')), 1, 7)`;
-// Split payments: count both payment lines toward Eftpos/Cash/OnAcc
-const SUM_EFTPOS = `(COALESCE(CASE WHEN paid_status = 'Eftpos' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'Eftpos' THEN payment_amount_2 ELSE 0 END, 0))`;
-const SUM_CASH = `(COALESCE(CASE WHEN paid_status = 'Cash' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'Cash' THEN payment_amount_2 ELSE 0 END, 0))`;
-const SUM_ONACC = `(COALESCE(CASE WHEN paid_status = 'OnAcc' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'OnAcc' THEN payment_amount_2 ELSE 0 END, 0))`;
-// Money actually received (excludes "To Pay" rows where payment_amount may mirror total_price but nothing was banked)
-const PAID_INV_TOTAL = `(${SUM_EFTPOS} + ${SUM_CASH} + ${SUM_ONACC})`;
+
+/** Paid invoice lines in date range (payment / settlement day), for matching EFTPOS terminal totals. */
+function sqlPaidLinesUnion() {
+  const E1 = effectivePay1Day('i');
+  const E2 = effectivePay2Day('i');
+  return `
+  SELECT i.id AS invoice_id,
+    ${E1} AS d,
+    ${l1PaidTotal('i')} AS line_total,
+    ${l1Eftpos('i')} AS line_eftpos,
+    ${l1Cash('i')} AS line_cash,
+    ${l1OnAcc('i')} AS line_onacc
+  FROM invoices i
+  WHERE i.carpark_id = ? AND i.void = 0
+  AND (${E1}) >= ? AND (${E1}) <= ?
+  UNION ALL
+  SELECT i.id,
+    ${E2},
+    ${l2PaidTotal('i')},
+    ${l2Eftpos('i')},
+    ${l2Cash('i')},
+    ${l2OnAcc('i')}
+  FROM invoices i
+  WHERE i.carpark_id = ? AND i.void = 0
+  AND (${E2}) IS NOT NULL
+  AND (${E2}) >= ? AND (${E2}) <= ?
+  `;
+}
 
 router.get('/revenue', requireAuth, async (req, res) => {
   try {
@@ -26,22 +72,44 @@ router.get('/revenue', requireAuth, async (req, res) => {
     const firstOfMonth = today.substring(0, 8) + '01';
     const fromDate = from || firstOfMonth;
     const toDate   = to || today;
-    let groupExprInv = INV_DAY;
     let groupExprLt  = LT_DAY;
-    if (group_by === 'week')  { groupExprInv = "strftime('%Y-W%W', date_in)"; groupExprLt = "strftime('%Y-W%W', payment_date)"; }
-    else if (group_by === 'month') { groupExprInv = INV_MONTH; groupExprLt = LT_MONTH; }
+    if (group_by === 'week')  { groupExprLt = "strftime('%Y-W%W', payment_date)"; }
+    else if (group_by === 'month') { groupExprLt = LT_MONTH; }
 
-    const invRevenue = await db.prepare(`
-      SELECT ${groupExprInv} as period, COUNT(*) as invoices,
-        COALESCE(SUM(${PAID_INV_TOTAL}), 0) as total,
-        COALESCE(SUM(${SUM_EFTPOS}), 0) as eftpos,
-        COALESCE(SUM(${SUM_CASH}), 0) as cash,
-        COALESCE(SUM(${SUM_ONACC}), 0) as on_account,
-        COALESCE(SUM(CASE WHEN paid_status = 'To Pay' THEN total_price ELSE 0 END), 0) as outstanding
+    let groupPaidPeriod = 'u.d';
+    if (group_by === 'week') groupPaidPeriod = `strftime('%Y-W%W', u.d)`;
+    else if (group_by === 'month') groupPaidPeriod = `substr(u.d, 1, 7)`;
+
+    let groupExprOut = INV_DAY;
+    if (group_by === 'week') groupExprOut = "strftime('%Y-W%W', date_in)";
+    else if (group_by === 'month') groupExprOut = INV_MONTH;
+
+    const unionSql = sqlPaidLinesUnion();
+    const invPaid = await db.prepare(`
+      SELECT ${groupPaidPeriod} AS period,
+        COUNT(DISTINCT u.invoice_id) AS invoices,
+        COALESCE(SUM(u.line_total), 0) AS total,
+        COALESCE(SUM(u.line_eftpos), 0) AS eftpos,
+        COALESCE(SUM(u.line_cash), 0) AS cash,
+        COALESCE(SUM(u.line_onacc), 0) AS on_account
+      FROM (${unionSql}) u
+      GROUP BY period
+      ORDER BY period DESC
+    `).all(carparkId, fromDate, toDate, carparkId, fromDate, toDate);
+
+    const invOutstanding = await db.prepare(`
+      SELECT ${groupExprOut} AS period,
+        COALESCE(SUM(CASE WHEN paid_status = 'To Pay' THEN total_price ELSE 0 END), 0) AS outstanding
       FROM invoices WHERE carpark_id = ? AND void = 0
       AND ${INV_DAY} >= ? AND ${INV_DAY} <= ?
-      GROUP BY ${groupExprInv} ORDER BY period DESC
+      GROUP BY period
     `).all(carparkId, fromDate, toDate);
+
+    const outMap = new Map(invOutstanding.map((r) => [String(r.period), r.outstanding]));
+    const invRevenue = invPaid.map((r) => ({
+      ...r,
+      outstanding: outMap.get(String(r.period)) || 0,
+    }));
 
     // Long-term payments: stored ex GST; reports display inc GST to match invoice revenue fields.
     const ltRevenue = await db.prepare(`
@@ -54,26 +122,43 @@ router.get('/revenue', requireAuth, async (req, res) => {
     `).all(carparkId, fromDate, toDate);
 
     const byPeriod = new Map();
-    for (const r of invRevenue) byPeriod.set(r.period, { ...r, longterm: 0 });
+    for (const r of invRevenue) byPeriod.set(String(r.period), { ...r, longterm: 0 });
     for (const r of ltRevenue) {
-      const existing = byPeriod.get(r.period) || { period: r.period, invoices: 0, total: 0, eftpos: 0, cash: 0, on_account: 0, outstanding: 0, longterm: 0 };
+      const k = String(r.period);
+      const existing = byPeriod.get(k) || { period: r.period, invoices: 0, total: 0, eftpos: 0, cash: 0, on_account: 0, outstanding: 0, longterm: 0 };
       existing.longterm = (existing.longterm || 0) + (r.longterm_total || 0);
       existing.total = (existing.total || 0) + (r.longterm_total || 0);
       existing.lt_payments = (existing.lt_payments || 0) + (r.lt_payments || 0);
-      byPeriod.set(r.period, existing);
+      byPeriod.set(k, existing);
     }
     const revenue = Array.from(byPeriod.values()).sort((a, b) => String(b.period).localeCompare(String(a.period)));
 
     const invSummary = await db.prepare(`
-      SELECT COUNT(*) as total_invoices,
-        COALESCE(SUM(${PAID_INV_TOTAL}), 0) as total_revenue,
-        COALESCE(SUM(${SUM_EFTPOS}), 0) as eftpos_total,
-        COALESCE(SUM(${SUM_CASH}), 0) as cash_total,
-        COALESCE(SUM(${SUM_ONACC}), 0) as on_account_total,
-        COALESCE(SUM(CASE WHEN paid_status = 'To Pay' THEN total_price ELSE 0 END), 0) as outstanding_total
+      SELECT
+        (${sumBothLinesInRange(L1_PAID_TOTAL, L2_PAID_TOTAL)}) AS total_revenue,
+        (${sumBothLinesInRange(L1_EFTPOS, L2_EFTPOS)}) AS eftpos_total,
+        (${sumBothLinesInRange(L1_CASH, L2_CASH)}) AS cash_total,
+        (${sumBothLinesInRange(L1_ONACC, L2_ONACC)}) AS on_account_total,
+        COALESCE(SUM(CASE WHEN (${INV_DAY}) >= ? AND (${INV_DAY}) <= ? AND paid_status = 'To Pay' THEN total_price ELSE 0 END), 0) AS outstanding_total
       FROM invoices WHERE carpark_id = ? AND void = 0
-      AND ${INV_DAY} >= ? AND ${INV_DAY} <= ?
-    `).get(carparkId, fromDate, toDate);
+    `).get(
+      fromDate, toDate, fromDate, toDate,
+      fromDate, toDate, fromDate, toDate,
+      fromDate, toDate, fromDate, toDate,
+      fromDate, toDate, fromDate, toDate,
+      fromDate, toDate,
+      carparkId
+    );
+
+    const invCountRow = await db.prepare(`
+      SELECT COUNT(*) AS n FROM (
+        SELECT id FROM invoices WHERE carpark_id = ? AND void = 0
+          AND (${EFFECTIVE_PAY1_DAY}) >= ? AND (${EFFECTIVE_PAY1_DAY}) <= ? AND paid_status != 'To Pay' AND ABS(COALESCE(payment_amount,0)) > 0.0001
+        UNION
+        SELECT id FROM invoices WHERE carpark_id = ? AND void = 0
+          AND (${EFFECTIVE_PAY2_DAY}) IS NOT NULL AND (${EFFECTIVE_PAY2_DAY}) >= ? AND (${EFFECTIVE_PAY2_DAY}) <= ? AND COALESCE(payment_amount_2,0) > 0
+      )
+    `).get(carparkId, fromDate, toDate, carparkId, fromDate, toDate);
 
     const ltSummary = await db.prepare(`
       SELECT COUNT(*) as lt_payments,
@@ -84,9 +169,13 @@ router.get('/revenue', requireAuth, async (req, res) => {
     `).get(carparkId, fromDate, toDate);
 
     const summary = {
-      ...invSummary,
-      longterm_total: ltSummary.longterm_total || 0,
+      total_invoices: invCountRow.n || 0,
       total_revenue: (invSummary.total_revenue || 0) + (ltSummary.longterm_total || 0),
+      eftpos_total: invSummary.eftpos_total || 0,
+      cash_total: invSummary.cash_total || 0,
+      on_account_total: invSummary.on_account_total || 0,
+      outstanding_total: invSummary.outstanding_total || 0,
+      longterm_total: ltSummary.longterm_total || 0,
     };
     res.json({ revenue, summary, fromDate, toDate });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -196,27 +285,47 @@ router.get('/revenue/pdf', requireAuth, async (req, res) => {
     const toDate   = to || today;
     const carpark  = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(carparkId);
     const invSummary  = await db.prepare(`
-      SELECT COUNT(*) as total_invoices, COALESCE(SUM(${PAID_INV_TOTAL}), 0) as total_revenue,
-        COALESCE(SUM(${SUM_EFTPOS}), 0) as eftpos,
-        COALESCE(SUM(${SUM_CASH}), 0) as cash,
-        COALESCE(SUM(${SUM_ONACC}), 0) as on_account
-      FROM invoices WHERE carpark_id = ? AND void = 0 AND ${INV_DAY} >= ? AND ${INV_DAY} <= ?
-    `).get(carparkId, fromDate, toDate);
+      SELECT
+        (${sumBothLinesInRange(L1_PAID_TOTAL, L2_PAID_TOTAL)}) AS total_revenue,
+        (${sumBothLinesInRange(L1_EFTPOS, L2_EFTPOS)}) AS eftpos,
+        (${sumBothLinesInRange(L1_CASH, L2_CASH)}) AS cash,
+        (${sumBothLinesInRange(L1_ONACC, L2_ONACC)}) AS on_account
+      FROM invoices WHERE carpark_id = ? AND void = 0
+    `).get(
+      fromDate, toDate, fromDate, toDate,
+      fromDate, toDate, fromDate, toDate,
+      fromDate, toDate, fromDate, toDate,
+      fromDate, toDate, fromDate, toDate,
+      carparkId
+    );
+    const invCountPdf = await db.prepare(`
+      SELECT COUNT(*) AS n FROM (
+        SELECT id FROM invoices WHERE carpark_id = ? AND void = 0
+          AND (${EFFECTIVE_PAY1_DAY}) >= ? AND (${EFFECTIVE_PAY1_DAY}) <= ? AND paid_status != 'To Pay' AND ABS(COALESCE(payment_amount,0)) > 0.0001
+        UNION
+        SELECT id FROM invoices WHERE carpark_id = ? AND void = 0
+          AND (${EFFECTIVE_PAY2_DAY}) IS NOT NULL AND (${EFFECTIVE_PAY2_DAY}) >= ? AND (${EFFECTIVE_PAY2_DAY}) <= ? AND COALESCE(payment_amount_2,0) > 0
+      )
+    `).get(carparkId, fromDate, toDate, carparkId, fromDate, toDate);
     const ltSummary = await db.prepare(`
       SELECT COUNT(*) as lt_payments, COALESCE(SUM(amount_ex_gst * 1.15), 0) as longterm_total
       FROM longterm_payments
       WHERE carpark_id = ? AND ${LT_DAY} >= ? AND ${LT_DAY} <= ?
     `).get(carparkId, fromDate, toDate);
     const summary = {
-      ...invSummary,
+      total_invoices: invCountPdf.n || 0,
+      eftpos: invSummary.eftpos || 0,
+      cash: invSummary.cash || 0,
+      on_account: invSummary.on_account || 0,
       longterm_total: ltSummary.longterm_total || 0,
       total_revenue: (invSummary.total_revenue || 0) + (ltSummary.longterm_total || 0),
     };
+    const dailyUnion = sqlPaidLinesUnion();
     const dailyRevenue = await db.prepare(`
-      SELECT ${INV_DAY} as date, COUNT(*) as count, COALESCE(SUM(${PAID_INV_TOTAL}), 0) as total
-      FROM invoices WHERE carpark_id = ? AND void = 0 AND ${INV_DAY} >= ? AND ${INV_DAY} <= ?
-      GROUP BY ${INV_DAY} ORDER BY date ASC
-    `).all(carparkId, fromDate, toDate);
+      SELECT u.d AS date, COUNT(DISTINCT u.invoice_id) AS count, COALESCE(SUM(u.line_total), 0) AS total
+      FROM (${dailyUnion}) u
+      GROUP BY u.d ORDER BY date ASC
+    `).all(carparkId, fromDate, toDate, carparkId, fromDate, toDate);
     const dailyLt = await db.prepare(`
       SELECT ${LT_DAY} as date, COUNT(*) as count, COALESCE(SUM(amount_ex_gst * 1.15), 0) as total
       FROM longterm_payments
