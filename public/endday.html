@@ -20,17 +20,18 @@
       </div>
     </div>
 
+    <!-- Key totals -->
     <div class="row g-3 mb-4">
       <div class="col-md-3 col-6">
         <div class="stat-card success">
-          <div class="stat-value" id="ed-revenue">$0</div>
-          <div class="stat-label"><i class="bi bi-cash me-1"></i>Total Revenue</div>
+          <div class="stat-value" id="ed-eftpos-hero">$0</div>
+          <div class="stat-label"><i class="bi bi-credit-card me-1"></i>Eftpos <span class="badge bg-light text-dark small ms-1">terminal ✓</span></div>
         </div>
       </div>
       <div class="col-md-3 col-6">
         <div class="stat-card info">
-          <div class="stat-value" id="ed-cars-in">0</div>
-          <div class="stat-label"><i class="bi bi-car-front me-1"></i>Cars Checked In</div>
+          <div class="stat-value" id="ed-revenue">$0</div>
+          <div class="stat-label"><i class="bi bi-cash me-1"></i>Total Banked <span class="small text-muted">(all methods)</span></div>
         </div>
       </div>
       <div class="col-md-3 col-6">
@@ -41,8 +42,8 @@
       </div>
       <div class="col-md-3 col-6">
         <div class="stat-card">
-          <div class="stat-value" id="ed-cars-out">0</div>
-          <div class="stat-label"><i class="bi bi-box-arrow-right me-1"></i>Cars Out</div>
+          <div class="stat-value" id="ed-cars-in">0</div>
+          <div class="stat-label"><i class="bi bi-car-front me-1"></i>Cars In &nbsp;|&nbsp; <span id="ed-cars-out">0</span> Out</div>
         </div>
       </div>
     </div>
@@ -52,11 +53,13 @@
       <div class="col-md-4">
         <div class="form-card">
           <div class="form-section-title">Payment Breakdown</div>
+          <div class="alert alert-info small py-1 mb-2">Compare <strong>Eftpos</strong> line to your terminal report.</div>
           <table class="table table-sm">
             <tbody>
-              <tr><td>Eftpos</td><td class="fw-bold text-success text-end" id="ed-eftpos">$0</td></tr>
+              <tr class="table-success"><td><i class="bi bi-credit-card me-1"></i><strong>Eftpos</strong></td><td class="fw-bold text-success text-end fs-6" id="ed-eftpos">$0</td></tr>
               <tr><td>Cash</td><td class="fw-bold text-primary text-end" id="ed-cash">$0</td></tr>
               <tr><td>On Account</td><td class="fw-bold text-danger text-end" id="ed-account">$0</td></tr>
+              <tr class="table-light"><td><small class="text-muted">Total banked</small></td><td class="text-muted text-end small" id="ed-total-inline">$0</td></tr>
             </tbody>
           </table>
         </div>
@@ -73,16 +76,19 @@
       </div>
     </div>
 
-    <!-- Today's Invoices -->
+    <!-- Today's Invoices with payment detail -->
     <div class="form-card mb-3">
-      <div class="form-section-title"><i class="bi bi-receipt me-2"></i>Today's Invoices</div>
+      <div class="form-section-title d-flex align-items-center justify-content-between">
+        <span><i class="bi bi-receipt me-2"></i>Today's Invoices</span>
+        <small class="text-muted">Payment amounts shown contribute to the breakdown above</small>
+      </div>
       <div class="table-responsive">
         <table class="table table-sm table-hover">
           <thead>
-            <tr><th>Inv#</th><th>Name</th><th>Rego</th><th>Time In</th><th>Return</th><th>Total</th><th>Status</th><th>Staff</th></tr>
+            <tr><th>Inv#</th><th>Name</th><th>Rego</th><th>Time In</th><th>Return</th><th>Total</th><th>Paid</th><th>Method</th><th>Staff</th></tr>
           </thead>
           <tbody id="ed-invoices-tbody">
-            <tr><td colspan="8" class="text-center text-muted"><div class="spinner-border spinner-border-sm"></div></td></tr>
+            <tr><td colspan="9" class="text-center text-muted"><div class="spinner-border spinner-border-sm"></div></td></tr>
           </tbody>
         </table>
       </div>
@@ -122,19 +128,29 @@
 
       const s = data.stats;
       document.getElementById('ed-revenue').textContent = formatCurrency(s.total_revenue);
-      document.getElementById('ed-cars-in').textContent = s.cars_in || 0;
-      document.getElementById('ed-cars-in-yard').textContent = s.cars_in_yard || 0;
-      document.getElementById('ed-cars-out').textContent = s.cars_out || 0;
+      document.getElementById('ed-eftpos-hero').textContent = formatCurrency(s.eftpos);
       document.getElementById('ed-eftpos').textContent = formatCurrency(s.eftpos);
       document.getElementById('ed-cash').textContent = formatCurrency(s.cash);
       document.getElementById('ed-account').textContent = formatCurrency(s.on_account);
+      document.getElementById('ed-total-inline').textContent = formatCurrency(s.total_revenue);
+      document.getElementById('ed-cars-in').textContent = s.cars_in || 0;
+      document.getElementById('ed-cars-in-yard').textContent = s.cars_in_yard || 0;
+      document.getElementById('ed-cars-out').textContent = s.cars_out || 0;
 
       if (data.record && data.record.notes) {
         document.getElementById('ed-notes').value = data.record.notes;
       }
 
       // Today's invoices
-      document.getElementById('ed-invoices-tbody').innerHTML = data.invoices.map(inv => `
+      document.getElementById('ed-invoices-tbody').innerHTML = data.invoices.map(inv => {
+        const paidAmt1 = (inv.paid_status && inv.paid_status !== 'To Pay' && inv.payment_amount > 0) ? inv.payment_amount : 0;
+        const paidAmt2 = (inv.paid_status_2 && inv.paid_status_2 !== 'To Pay' && inv.payment_amount_2 > 0) ? inv.payment_amount_2 : 0;
+        const methodStr = [
+          paidAmt1 > 0 ? `${inv.paid_status} ${formatCurrency(paidAmt1)}` : '',
+          paidAmt2 > 0 ? `${inv.paid_status_2} ${formatCurrency(paidAmt2)}` : ''
+        ].filter(Boolean).join(' + ') || statusBadge(inv.paid_status);
+        const paidTotal = paidAmt1 + paidAmt2;
+        return `
         <tr class="${rowClass(inv.paid_status)}">
           <td><a href="/invoice.html?id=${inv.id}">#${inv.invoice_number}</a></td>
           <td>${inv.first_name||''} ${inv.last_name||''}</td>
@@ -142,10 +158,11 @@
           <td>${inv.time_in||''}</td>
           <td>${inv.return_date ? formatDateShort(inv.return_date) : ''}</td>
           <td class="fw-bold">${formatCurrency(inv.total_price)}</td>
-          <td>${statusBadge(inv.paid_status)}</td>
+          <td class="fw-bold ${paidTotal > 0 ? 'text-success' : 'text-warning'}">${paidTotal > 0 ? formatCurrency(paidTotal) : '—'}</td>
+          <td class="small">${methodStr}</td>
           <td class="small">${inv.staff_name||''}</td>
-        </tr>
-      `).join('') || '<tr><td colspan="8" class="text-center text-muted">No invoices today</td></tr>';
+        </tr>`;
+      }).join('') || '<tr><td colspan="9" class="text-center text-muted">No invoices today</td></tr>';
 
       // Saved status
       if (data.record) {
