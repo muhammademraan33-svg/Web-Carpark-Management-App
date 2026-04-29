@@ -67,6 +67,7 @@ router.get('/autofill', requireAuth, async (req, res) => {
       if (status === 'Eftpos') eftpos += amount;
       else if (status === 'Cash') cash += amount;
       else if (status === 'OnAcc') account += amount;
+      else if (status === 'Internet Banking') other += amount;
       else if (status && status !== 'To Pay') other += amount;
     };
 

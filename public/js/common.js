@@ -110,6 +110,7 @@ function statusBadge(status) {
   const map = {
     'Eftpos': 'badge-eftpos',
     'Cash': 'badge-cash',
+    'Internet Banking': 'badge bg-primary-subtle text-primary-emphasis',
     'OnAcc': 'badge-onaccount',
     'To Pay': 'badge-topay',
     'Voided': 'badge-voided'
@@ -123,6 +124,7 @@ function rowClass(status) {
   const map = {
     'Eftpos': 'row-eftpos',
     'Cash': 'row-cash',
+    'Internet Banking': 'row-internet-banking',
     'OnAcc': 'row-onaccount',
     'To Pay': 'row-topay',
     'Voided': 'row-voided'

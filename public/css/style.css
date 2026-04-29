@@ -15,6 +15,7 @@
   --menu-pink: #e91e8c;
   --menu-red: #e74c3c;
   --row-eftpos: #d5f5e3;
+  --row-internet-banking: #ede7f6;
   --row-onaccount: #fadbd8;
   --row-topay: #fef9e7;
   --row-voided: #ecf0f1;
@@ -189,6 +190,7 @@ body {
 
 /* Row color coding - matching original system */
 .row-eftpos { background-color: var(--row-eftpos) !important; }
+.row-internet-banking { background-color: var(--row-internet-banking) !important; }
 .row-onaccount { background-color: var(--row-onaccount) !important; }
 .row-topay { background-color: var(--row-topay) !important; }
 .row-cash { background-color: #d6eaf8 !important; }

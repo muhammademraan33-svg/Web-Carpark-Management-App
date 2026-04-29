@@ -32,8 +32,12 @@ function l1OnAcc(alias = '') {
   const p = alias ? `${alias}.` : '';
   return `(CASE WHEN ${p}paid_status = 'OnAcc' THEN COALESCE(${p}payment_amount,0) ELSE 0 END)`;
 }
+function l1InternetBanking(alias = '') {
+  const p = alias ? `${alias}.` : '';
+  return `(CASE WHEN ${p}paid_status = 'Internet Banking' THEN COALESCE(${p}payment_amount,0) ELSE 0 END)`;
+}
 function l1PaidTotal(alias = '') {
-  return `(${l1Eftpos(alias)} + ${l1Cash(alias)} + ${l1OnAcc(alias)})`;
+  return `(${l1Eftpos(alias)} + ${l1Cash(alias)} + ${l1OnAcc(alias)} + ${l1InternetBanking(alias)})`;
 }
 function l2Eftpos(alias = '') {
   const p = alias ? `${alias}.` : '';
@@ -47,8 +51,12 @@ function l2OnAcc(alias = '') {
   const p = alias ? `${alias}.` : '';
   return `(CASE WHEN ${p}paid_status_2 = 'OnAcc' THEN COALESCE(${p}payment_amount_2,0) ELSE 0 END)`;
 }
+function l2InternetBanking(alias = '') {
+  const p = alias ? `${alias}.` : '';
+  return `(CASE WHEN ${p}paid_status_2 = 'Internet Banking' THEN COALESCE(${p}payment_amount_2,0) ELSE 0 END)`;
+}
 function l2PaidTotal(alias = '') {
-  return `(${l2Eftpos(alias)} + ${l2Cash(alias)} + ${l2OnAcc(alias)})`;
+  return `(${l2Eftpos(alias)} + ${l2Cash(alias)} + ${l2OnAcc(alias)} + ${l2InternetBanking(alias)})`;
 }
 
 const EFFECTIVE_PAY1_DAY = effectivePay1Day();
@@ -81,10 +89,12 @@ module.exports = {
   l1Eftpos,
   l1Cash,
   l1OnAcc,
+  l1InternetBanking,
   l1PaidTotal,
   l2Eftpos,
   l2Cash,
   l2OnAcc,
+  l2InternetBanking,
   l2PaidTotal,
   EFFECTIVE_PAY1_DAY,
   EFFECTIVE_PAY2_DAY,

@@ -5,30 +5,31 @@ const { requireAuth } = require('../middleware/auth');
 const PDFDocument = require('pdfkit');
 const router = express.Router();
 
-// Hard-code the provided Gmail fallback so the deployed app works without
-// the owner needing to set Vercel env vars for SMTP.
-const SMTP_USER_DEFAULT = 'boicarparkkerikeri@gmail.com';
-const SMTP_PASS_DEFAULT = 'tney tgfn erxi mkny';
-const SMTP_FROM_DEFAULT = `BOI Car Storage <${SMTP_USER_DEFAULT}>`;
+const SMTP_MISSING_MSG =
+  'Email is not configured. Set SMTP_USER and SMTP_PASS in the server environment (e.g. Railway or .env). For Gmail: use an App Password (Google Account → Security → 2-Step Verification → App passwords). Typical settings: SMTP_HOST=smtp.gmail.com SMTP_PORT=587 SMTP_SECURE=false';
+
 const LONGTERM_MONTHLY_DEFAULT = 200.00;
 
 function getTransporter() {
+  const user = (process.env.SMTP_USER || '').trim();
+  const pass = (process.env.SMTP_PASS || '').trim();
+  if (!user || !pass) return null;
   return nodemailer.createTransport({
-    host:   process.env.SMTP_HOST || 'smtp.gmail.com',
-    port:   parseInt(process.env.SMTP_PORT || '587'),
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.SMTP_PORT || '587', 10),
     secure: process.env.SMTP_SECURE === 'true',
-    connectionTimeout: parseInt(process.env.SMTP_CONNECTION_TIMEOUT || '20000'),
-    greetingTimeout: parseInt(process.env.SMTP_GREETING_TIMEOUT || '12000'),
-    socketTimeout: parseInt(process.env.SMTP_SOCKET_TIMEOUT || '30000'),
-    auth: {
-      user: process.env.SMTP_USER || SMTP_USER_DEFAULT,
-      pass: process.env.SMTP_PASS || SMTP_PASS_DEFAULT,
-    },
+    connectionTimeout: parseInt(process.env.SMTP_CONNECTION_TIMEOUT || '20000', 10),
+    greetingTimeout: parseInt(process.env.SMTP_GREETING_TIMEOUT || '12000', 10),
+    socketTimeout: parseInt(process.env.SMTP_SOCKET_TIMEOUT || '30000', 10),
+    auth: { user, pass },
   });
 }
 
 function emailFrom() {
-  return process.env.EMAIL_FROM || SMTP_FROM_DEFAULT;
+  const from = (process.env.EMAIL_FROM || '').trim();
+  if (from) return from;
+  const user = (process.env.SMTP_USER || '').trim();
+  return user ? `BOI Car Storage <${user}>` : 'BOI Car Storage <noreply@localhost>';
 }
 
 function longTermGstAmounts(lt) {
@@ -346,6 +347,7 @@ router.post('/send-accounts', requireAuth, async (req, res) => {
     accounts = await db.prepare(`SELECT * FROM account_customers WHERE id IN (${ph}) AND carpark_id = ? AND active = 1`).all(...normalizedIds, carparkId);
 
     const transporter = getTransporter();
+    if (!transporter) return res.status(503).json({ error: SMTP_MISSING_MSG });
     const results = [];
 
     // Group accounts by recipient so duplicate company entries don't produce multiple emails.
@@ -481,6 +483,9 @@ router.post('/receipt/:invoiceId', requireAuth, async (req, res) => {
           <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right;">${currency(invoice.payment_amount_2)}</td></tr>` : ''}
     `;
 
+    const transporterEarly = getTransporter();
+    if (!transporterEarly) return res.status(503).json({ error: SMTP_MISSING_MSG });
+
     const html = `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"></head>
 <body style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;padding:20px;color:#333;">
@@ -533,8 +538,7 @@ router.post('/receipt/:invoiceId', requireAuth, async (req, res) => {
   </div>
 </body></html>`;
 
-    const transporter = getTransporter();
-    await transporter.sendMail({
+    await transporterEarly.sendMail({
       from: emailFrom(),
       to: emailTo,
       subject: `Receipt – ${carpark ? carpark.name : 'Car Storage'} – Invoice #${invoice.invoice_number}`,
@@ -608,6 +612,7 @@ router.post('/longterm/:id/payment-request', requireAuth, async (req, res) => {
     if (!emailTo) return res.status(400).json({ error: 'No email on this long-term customer' });
     const carpark = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(carparkId);
     const transporter = getTransporter();
+    if (!transporter) return res.status(503).json({ error: SMTP_MISSING_MSG });
     await transporter.sendMail({
       from: emailFrom(),
       to: emailTo,
@@ -648,6 +653,7 @@ router.post('/longterm/:id/receipt', requireAuth, async (req, res) => {
     if (!emailTo) return res.status(400).json({ error: 'No email on this long-term customer' });
     const carpark = await db.prepare('SELECT * FROM carparks WHERE id = ?').get(carparkId);
     const transporter = getTransporter();
+    if (!transporter) return res.status(503).json({ error: SMTP_MISSING_MSG });
     await transporter.sendMail({
       from: emailFrom(),
       to: emailTo,
@@ -669,6 +675,7 @@ router.post('/test', requireAuth, async (req, res) => {
   if (!email) return res.status(400).json({ error: 'Email required' });
   try {
     const transporter = getTransporter();
+    if (!transporter) return res.status(503).json({ error: SMTP_MISSING_MSG });
     await transporter.sendMail({
       from: emailFrom(),
       to: email,

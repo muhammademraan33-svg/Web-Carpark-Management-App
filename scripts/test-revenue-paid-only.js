@@ -9,7 +9,8 @@
   const SUM_EFTPOS = `(COALESCE(CASE WHEN paid_status = 'Eftpos' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'Eftpos' THEN payment_amount_2 ELSE 0 END, 0))`;
   const SUM_CASH = `(COALESCE(CASE WHEN paid_status = 'Cash' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'Cash' THEN payment_amount_2 ELSE 0 END, 0))`;
   const SUM_ONACC = `(COALESCE(CASE WHEN paid_status = 'OnAcc' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'OnAcc' THEN payment_amount_2 ELSE 0 END, 0))`;
-  const PAID_INV_TOTAL = `(${SUM_EFTPOS} + ${SUM_CASH} + ${SUM_ONACC})`;
+  const SUM_IB = `(COALESCE(CASE WHEN paid_status = 'Internet Banking' THEN payment_amount ELSE 0 END, 0) + COALESCE(CASE WHEN paid_status_2 = 'Internet Banking' THEN payment_amount_2 ELSE 0 END, 0))`;
+  const PAID_INV_TOTAL = `(${SUM_EFTPOS} + ${SUM_CASH} + ${SUM_ONACC} + ${SUM_IB})`;
 
   await initializeDatabase();
   const carparkId = 1;
@@ -31,7 +32,7 @@
   `).get(carparkId);
 
   console.log('All invoices raw sum (payment1+2):', raw.raw_sum);
-  console.log('Paid-classified sum (Eftpos+Cash+OnAcc lines):', paid.paid_sum);
+  console.log('Paid-classified sum (Eftpos+Cash+IB+OnAcc lines):', paid.paid_sum);
   console.log('To Pay rows:', toPayRows.n, '— raw payment fields total (should NOT count as banked):', toPayRows.raw_in_topay);
   if (Number(raw.raw_sum) !== Number(paid.paid_sum) && Number(toPayRows.raw_in_topay) > 0) {
     console.log('OK: Totals may differ because "To Pay" rows include payment_amount, while the report sums only paid_sum.');

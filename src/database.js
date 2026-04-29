@@ -396,10 +396,12 @@ async function initializeDatabase() {
     eftpos_total REAL DEFAULT 0,
     cash_total REAL DEFAULT 0,
     account_total REAL DEFAULT 0,
+    internet_banking_total REAL DEFAULT 0,
     notes TEXT,
     staff_id INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  try { x(`ALTER TABLE end_day ADD COLUMN internet_banking_total REAL DEFAULT 0`); } catch (_) {}
 
   x(`CREATE TABLE IF NOT EXISTS email_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

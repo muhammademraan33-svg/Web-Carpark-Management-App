@@ -64,6 +64,34 @@ function isPaidLine(statusRaw, amountRaw) {
   return amount > 0 && status && status !== 'To Pay';
 }
 
+function normalizePaymentDateYmd(raw) {
+  if (raw == null || raw === '') return null;
+  const s = String(raw).trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  return s;
+}
+
+/** Resolves payment_date_1/2 from the request body (staff-entered banked date) with fallbacks. */
+function resolvePaymentDates(body, existing, today) {
+  const {
+    paid_status, payment_amount, paid_status_2, payment_amount_2,
+    payment_date_1: body1, payment_date_2: body2
+  } = body;
+  let pd1 = null;
+  if (isPaidLine(paid_status, payment_amount)) {
+    const fromClient = normalizePaymentDateYmd(body1);
+    const prior = existing && normalizePaymentDateYmd(existing.payment_date_1);
+    pd1 = fromClient || prior || today;
+  }
+  let pd2 = null;
+  if (isPaidLine(paid_status_2, payment_amount_2)) {
+    const fromClient = normalizePaymentDateYmd(body2);
+    const prior = existing && normalizePaymentDateYmd(existing.payment_date_2);
+    pd2 = fromClient || prior || today;
+  }
+  return { pd1, pd2 };
+}
+
 // GET /api/invoices/calculate-price  – MUST be before /:id
 router.get('/calculate-price', requireAuth, async (req, res) => {
   try {
@@ -248,6 +276,7 @@ router.post('/', requireAuth, async (req, res) => {
       date_in, time_in, return_date, return_time, stay_nights,
       flight_info, flight_type, total_price, credit_applied, discount_percent,
       paid_status, payment_amount, payment_method, paid_status_2, payment_amount_2, payment_method_2,
+      payment_date_1, payment_date_2,
       do_not_move, picked_up, staff_id, notes, customer_alert
     } = req.body;
 
@@ -257,8 +286,11 @@ router.post('/', requireAuth, async (req, res) => {
     const finalPickedUp = picked_up || 'Car In Yard';
     const computedStayNights = deriveStayNights24h(date_in, time_in, return_date, return_time, stay_nights);
     const today = businessDateYmd();
-    const paymentDate1 = isPaidLine(paid_status, payment_amount) ? today : null;
-    const paymentDate2 = isPaidLine(paid_status_2, payment_amount_2) ? today : null;
+    const { pd1: paymentDate1, pd2: paymentDate2 } = resolvePaymentDates(
+      { ...req.body, payment_date_1, payment_date_2 },
+      null,
+      today
+    );
 
     const result = await db.prepare(`
       INSERT INTO invoices (
@@ -301,6 +333,7 @@ router.put('/:id', requireAuth, async (req, res) => {
       date_in, time_in, return_date, return_time, stay_nights,
       flight_info, flight_type, total_price, credit_applied, discount_percent,
       paid_status, payment_amount, payment_method, paid_status_2, payment_amount_2, payment_method_2,
+      payment_date_1, payment_date_2,
       do_not_move, picked_up, staff_id, notes, customer_alert, account_customer_id
     } = req.body;
 
@@ -315,12 +348,11 @@ router.put('/:id', requireAuth, async (req, res) => {
     const finalPickedUp = picked_up || 'Car In Yard';
     const computedStayNights = deriveStayNights24h(date_in, time_in, return_date, return_time, stay_nights);
     const today = businessDateYmd();
-    const nextPaymentDate1 = isPaidLine(paid_status, payment_amount)
-      ? (existing.payment_date_1 || today)
-      : null;
-    const nextPaymentDate2 = isPaidLine(paid_status_2, payment_amount_2)
-      ? (existing.payment_date_2 || today)
-      : null;
+    const { pd1: nextPaymentDate1, pd2: nextPaymentDate2 } = resolvePaymentDates(
+      { ...req.body, payment_date_1, payment_date_2 },
+      existing,
+      today
+    );
 
     await db.prepare(`
       UPDATE invoices SET

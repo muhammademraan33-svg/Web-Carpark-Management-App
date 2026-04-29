@@ -9,6 +9,27 @@ let paymentLockReason = ''; // when set, PAID STATUS is hard-locked to OnAcc
 let longTermPricingActive = false; // when true, LT auto price is in control
 let pricingMode = 'manual'; // manual | longterm | account-rate-card | account-discount
 
+function syncPaymentReceivedDateUi() {
+  const s1 = document.getElementById('inv-paid-status').value;
+  const paid1 = s1 && s1 !== 'To Pay';
+  document.getElementById('inv-payment-date-1-wrap').classList.toggle('d-none', !paid1);
+  const splitOn = document.getElementById('split-payment-toggle').checked;
+  const s2 = document.getElementById('inv-paid-status-2').value;
+  const paid2 = splitOn && s2 && s2 !== 'To Pay';
+  document.getElementById('inv-payment-date-2-wrap').classList.toggle('d-none', !paid2);
+}
+
+function ensurePaymentDateDefaults() {
+  const el1 = document.getElementById('inv-payment-date-1');
+  const el2 = document.getElementById('inv-payment-date-2');
+  const s1 = document.getElementById('inv-paid-status').value;
+  if (s1 && s1 !== 'To Pay' && el1 && !el1.value) el1.value = localDateStr(new Date());
+  const s2 = document.getElementById('inv-paid-status-2').value;
+  if (document.getElementById('split-payment-toggle').checked && s2 && s2 !== 'To Pay' && el2 && !el2.value) {
+    el2.value = localDateStr(new Date());
+  }
+}
+
 // ─── Customer alert helpers (robust if elements missing) ──────────────────────
 function getCustomerAlertElement() {
   return document.getElementById('customer-alert-text');
@@ -181,6 +202,9 @@ async function newInvoice() {
   document.getElementById('inv-payment-amount-2').value = '';
   document.getElementById('inv-paid-status').value = 'To Pay';
   document.getElementById('inv-paid-status-2').value = '';
+  document.getElementById('inv-payment-date-1').value = '';
+  document.getElementById('inv-payment-date-2').value = '';
+  syncPaymentReceivedDateUi();
   document.getElementById('inv-do-not-move').checked = false;
   document.getElementById('inv-picked-up').value = 'Car In Yard';
   document.getElementById('inv-discount-10').checked = false;
@@ -243,6 +267,9 @@ async function loadInvoice(invoiceNumber, invoiceId) {
   document.getElementById('inv-paid-status').value = inv.paid_status || 'To Pay';
   document.getElementById('inv-payment-amount-2').value = inv.payment_amount_2 || '';
   document.getElementById('inv-paid-status-2').value = inv.paid_status_2 || '';
+  document.getElementById('inv-payment-date-1').value = inv.payment_date_1 ? String(inv.payment_date_1).slice(0, 10) : '';
+  document.getElementById('inv-payment-date-2').value = inv.payment_date_2 ? String(inv.payment_date_2).slice(0, 10) : '';
+  syncPaymentReceivedDateUi();
   document.getElementById('inv-do-not-move').checked = !!inv.do_not_move;
   document.getElementById('inv-picked-up').value = inv.picked_up || 'Car In Yard';
   document.getElementById('inv-account-customer').value = inv.account_customer_id || '';
@@ -657,6 +684,8 @@ document.getElementById('split-payment-toggle').addEventListener('change', (e) =
     return;
   }
   document.getElementById('payment2-section').classList.toggle('d-none', !e.target.checked);
+  syncPaymentReceivedDateUi();
+  ensurePaymentDateDefaults();
 });
 
 document.getElementById('inv-no-key').addEventListener('change', (e) => {
@@ -716,6 +745,17 @@ document.getElementById('inv-paid-status').addEventListener('change', () => {
   if (total > 0 && !document.getElementById('inv-payment-amount').value) {
     document.getElementById('inv-payment-amount').value = (total - p2).toFixed(2);
   }
+  const s = document.getElementById('inv-paid-status').value;
+  if (!s || s === 'To Pay') document.getElementById('inv-payment-date-1').value = '';
+  syncPaymentReceivedDateUi();
+  ensurePaymentDateDefaults();
+});
+
+document.getElementById('inv-paid-status-2').addEventListener('change', () => {
+  const s = document.getElementById('inv-paid-status-2').value;
+  if (!s || s === 'To Pay') document.getElementById('inv-payment-date-2').value = '';
+  syncPaymentReceivedDateUi();
+  ensurePaymentDateDefaults();
 });
 
 // Calculate price
@@ -882,6 +922,8 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
     payment_amount: document.getElementById('inv-payment-amount').value,
     paid_status_2: document.getElementById('inv-paid-status-2').value || null,
     payment_amount_2: document.getElementById('inv-payment-amount-2').value || 0,
+    payment_date_1: document.getElementById('inv-payment-date-1').value || null,
+    payment_date_2: document.getElementById('inv-payment-date-2').value || null,
     do_not_move: document.getElementById('inv-do-not-move').checked,
     picked_up: document.getElementById('inv-picked-up').value,
     staff_id: document.getElementById('inv-staff').value,
