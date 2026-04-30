@@ -32,6 +32,14 @@ function emailFrom() {
   return user ? `BOI Car Storage <${user}>` : 'BOI Car Storage <noreply@localhost>';
 }
 
+function smtpErrorMessage(err) {
+  const msg = String((err && err.message) || '');
+  if (/535|badcredentials|invalid login|username and password not accepted/i.test(msg)) {
+    return 'SMTP authentication failed (Gmail rejected login). Update SMTP_PASS to a current Gmail App Password, and ensure SMTP_USER matches that Gmail account.';
+  }
+  return msg || 'Email send failed';
+}
+
 function longTermGstAmounts(lt) {
   const GST_RATE = 0.15;
   const baseRaw = lt.contract_amount != null && lt.contract_amount !== '' ? lt.contract_amount : (lt.rate || LONGTERM_MONTHLY_DEFAULT);
@@ -267,7 +275,7 @@ router.get('/preview', requireAuth, async (req, res) => {
     });
 
     res.json({ month: m, year: y, monthName, dueDate: dueDateYmd, carpark, accounts: accountData });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: smtpErrorMessage(err) }); }
 });
 
 // GET /api/email/account-invoice.pdf?month=MM&year=YYYY&account_ids=1,2,3
@@ -623,7 +631,7 @@ router.post('/longterm/:id/payment-request', requireAuth, async (req, res) => {
   } catch (err) {
     const msg = /timed?out/i.test(String(err.message || ''))
       ? 'SMTP connection timeout. Check Railway SMTP env vars and outbound connection.'
-      : err.message;
+      : smtpErrorMessage(err);
     res.status(500).json({ error: msg });
   }
 });
@@ -664,7 +672,7 @@ router.post('/longterm/:id/receipt', requireAuth, async (req, res) => {
   } catch (err) {
     const msg = /timed?out/i.test(String(err.message || ''))
       ? 'SMTP connection timeout. Check Railway SMTP env vars and outbound connection.'
-      : err.message;
+      : smtpErrorMessage(err);
     res.status(500).json({ error: msg });
   }
 });
@@ -684,7 +692,7 @@ router.post('/test', requireAuth, async (req, res) => {
     });
     res.json({ success: true, message: `Test email sent to ${email}` });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: smtpErrorMessage(err) });
   }
 });
 

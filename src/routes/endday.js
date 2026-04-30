@@ -5,6 +5,14 @@ const { businessDateYmd } = require('../utils/businessDate');
 const { EFFECTIVE_PAY1_DAY, EFFECTIVE_PAY2_DAY } = require('../utils/invoicePaymentDates');
 const router = express.Router();
 
+async function ensureEndDayInternetColumn() {
+  try {
+    await db.prepare(`ALTER TABLE end_day ADD COLUMN internet_banking_total REAL DEFAULT 0`).run();
+  } catch (_) {
+    // Column already exists (or migration already applied).
+  }
+}
+
 router.get('/', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
@@ -48,6 +56,7 @@ router.post('/', requireAuth, async (req, res) => {
     const carparkId = req.session.carparkId || 1;
     const { date, notes } = req.body;
     const today = date || businessDateYmd();
+    await ensureEndDayInternetColumn();
     const stats = await db.prepare(`
       SELECT
         COUNT(CASE WHEN DATE(date_in) = ? THEN 1 END) as cars_in,
