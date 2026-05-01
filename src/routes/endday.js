@@ -81,7 +81,7 @@ router.post('/', requireAuth, async (req, res) => {
           COALESCE(CASE WHEN (${EFFECTIVE_PAY2_DAY}) IS NOT NULL AND (${EFFECTIVE_PAY2_DAY}) = ? AND paid_status_2 = 'Internet Banking' THEN payment_amount_2 ELSE 0 END, 0)
         ), 0) as internet_banking
       FROM invoices WHERE carpark_id = ? AND void = 0
-    `).get(today, today, today, today, today, today, today, today, today, today, today, today, carparkId);
+    `).get(today, today, today, today, today, today, today, today, today, today, today, carparkId);
     const carsInYard = await db.prepare(`SELECT COUNT(*) as count FROM invoices WHERE carpark_id = ? AND void = 0 AND picked_up = 'Car In Yard'`).get(carparkId);
     const existing = await db.prepare('SELECT id FROM end_day WHERE carpark_id = ? AND date = ?').get(carparkId, today);
     if (existing) {

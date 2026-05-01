@@ -225,7 +225,7 @@ router.get('/next-number', requireAuth, async (req, res) => {
 router.get('/', requireAuth, async (req, res) => {
   try {
     const carparkId = req.session.carparkId || 1;
-    const { search, date, status, void: showVoid, customer_id } = req.query;
+    const { search, date, status, void: showVoid, customer_id, limit, offset } = req.query;
     let query = `
       SELECT i.*, u.name as staff_name, ac.company_name as account_name
       FROM invoices i
@@ -243,7 +243,10 @@ router.get('/', requireAuth, async (req, res) => {
       const s = `%${search}%`;
       params.push(s, s, s, s, s);
     }
-    query += ' ORDER BY i.created_at DESC LIMIT 200';
+    const lim = Math.min(500, Math.max(1, parseInt(limit, 10) || 200));
+    const off = Math.max(0, parseInt(offset, 10) || 0);
+    query += ' ORDER BY i.created_at DESC LIMIT ? OFFSET ?';
+    params.push(lim, off);
     const invoices = await db.prepare(query).all(...params);
     res.json(invoices);
   } catch (err) { res.status(500).json({ error: err.message }); }

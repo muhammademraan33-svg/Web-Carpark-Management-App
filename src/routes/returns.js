@@ -28,11 +28,14 @@ router.get('/', requireAuth, async (req, res) => {
 
     // Return Date view includes:
     // - cars returning on selected day, plus
-    // - overdue cars (past return date) that are still in yard.
+    // - overdue cars (past return date) that are still in yard, plus
+    // - cars with no return date yet (TBC / blank) still in yard — otherwise they only appear in Key Box.
+    const noReturnYet = `(trim(COALESCE(i.return_date, '')) = '' OR i.return_date IS NULL)`;
     if (dateField === 'return_date') {
       query += ` AND (
         DATE(i.return_date) = ?
         OR (DATE(i.return_date) < ? AND ${inYardExpr})
+        OR (${noReturnYet} AND ${inYardExpr})
       )`;
       params.push(filterDate, filterDate);
     } else {

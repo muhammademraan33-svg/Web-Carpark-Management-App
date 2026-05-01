@@ -123,8 +123,12 @@
 
     async function loadEndDay() {
       const date = dateInput.value;
-      const res = await fetch(`/api/endday?date=${date}`);
-      if (!res.ok) return;
+      const res = await fetch(`/api/endday?date=${encodeURIComponent(date)}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showAlert(err.error || 'Could not load End of Day', 'danger');
+        return;
+      }
       const data = await res.json();
 
       const s = data.stats;
@@ -139,8 +143,10 @@
       document.getElementById('ed-cars-in-yard').textContent = s.cars_in_yard || 0;
       document.getElementById('ed-cars-out').textContent = s.cars_out || 0;
 
-      if (data.record && data.record.notes) {
-        document.getElementById('ed-notes').value = data.record.notes;
+      if (data.record) {
+        document.getElementById('ed-notes').value = data.record.notes || '';
+      } else {
+        document.getElementById('ed-notes').value = '';
       }
 
       // Today's invoices
@@ -176,7 +182,11 @@
 
     async function loadHistory() {
       const res = await fetch('/api/endday/history');
-      if (!res.ok) return;
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showAlert(err.error || 'Could not load history', 'danger');
+        return;
+      }
       const records = await res.json();
       document.getElementById('ed-history-tbody').innerHTML = records.map(r => `
         <tr>
@@ -199,7 +209,7 @@
     document.getElementById('btn-save-endday').addEventListener('click', async () => {
       const res = await fetch('/api/endday', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({
           date: dateInput.value,
           notes: document.getElementById('ed-notes').value
@@ -208,7 +218,11 @@
       if (res.ok) {
         showAlert('End of day record saved!', 'success');
         document.getElementById('ed-saved-status').innerHTML = '<span class="badge bg-success">Record saved</span>';
-        loadHistory();
+        await loadEndDay();
+        await loadHistory();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showAlert(err.error || ('Save failed (' + res.status + ')'), 'danger');
       }
     });
 
