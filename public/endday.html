@@ -77,6 +77,36 @@
       </div>
     </div>
 
+    <!-- Payment activity (chronological) -->
+    <div class="form-card mb-3">
+      <div class="form-section-title d-flex align-items-center justify-content-between">
+        <span><i class="bi bi-clock me-2"></i>Payment activity (chronological)</span>
+        <small class="text-muted">Use this to match deposits or terminal receipts to specific payments</small>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover">
+          <thead>
+            <tr>
+              <th style="width:80px;">Time</th>
+              <th>Source</th>
+              <th>Name / Rego</th>
+              <th>Method</th>
+              <th class="text-end">Amount</th>
+              <th>Reference / Staff</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="ed-activity-tbody">
+            <tr><td colspan="7" class="text-center text-muted"><div class="spinner-border spinner-border-sm"></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="small text-muted">
+        Times come from invoice <strong>time in</strong> (line 1), last <strong>updated_at</strong> (line 2 / payment edits), or the
+        time the long-term / account payment was recorded. Long-term amounts are <strong>ex GST</strong>.
+      </div>
+    </div>
+
     <!-- Today's Invoices with payment detail -->
     <div class="form-card mb-3">
       <div class="form-section-title d-flex align-items-center justify-content-between">
@@ -177,6 +207,42 @@
         document.getElementById('ed-saved-status').innerHTML = '<span class="badge bg-success">Record saved</span>';
       } else {
         document.getElementById('ed-saved-status').innerHTML = '<span class="badge bg-warning text-dark">Not saved yet</span>';
+      }
+
+      // Payment activity table
+      const activity = Array.isArray(data.activity) ? data.activity : [];
+      const actTbody = document.getElementById('ed-activity-tbody');
+      if (activity.length === 0) {
+        actTbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No payment activity recorded for this date</td></tr>';
+      } else {
+        actTbody.innerHTML = activity.map(a => {
+          let source = '';
+          let name = '';
+          let action = '';
+          if (a.type === 'invoice') {
+            source = `<a href="/invoice.html?id=${a.invoice_id}">Inv #${a.invoice_number}</a>${a.line === 2 ? ' <span class="badge bg-secondary-subtle text-secondary-emphasis">L2</span>' : ''}`;
+            name = `${a.name || ''}${a.rego ? ' <span class="text-muted small">(' + a.rego + ')</span>' : ''}`;
+            action = `<a class="btn btn-action btn-outline-primary" href="/invoice.html?id=${a.invoice_id}">Open</a>`;
+          } else if (a.type === 'longterm') {
+            source = `<span class="badge bg-warning text-dark">${a.lt_number || 'LT'}</span>`;
+            name = `${a.name || ''} <span class="text-muted small">(ex GST)</span>`;
+            action = `<a class="btn btn-action btn-outline-primary" href="/longterm.html">Open</a>`;
+          } else if (a.type === 'account') {
+            source = `<span class="badge bg-info text-dark">ACC</span>`;
+            name = a.name || '';
+            action = `<a class="btn btn-action btn-outline-primary" href="/accounts.html">Open</a>`;
+          }
+          const ref = a.reference || a.staff || '';
+          return `<tr>
+            <td class="small">${a.time || '<span class="text-muted">—</span>'}</td>
+            <td>${source}</td>
+            <td>${name}</td>
+            <td>${statusBadge(a.method || '')}</td>
+            <td class="text-end fw-bold">${formatCurrency(a.amount)}</td>
+            <td class="small text-muted">${ref}</td>
+            <td>${action}</td>
+          </tr>`;
+        }).join('');
       }
     }
 

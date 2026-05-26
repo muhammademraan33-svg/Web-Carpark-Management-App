@@ -65,13 +65,15 @@
               <th>Name</th>
               <th>Rego</th>
               <th>Date in</th>
+              <th>Date out</th>
+              <th>Payment date</th>
               <th>Status</th>
               <th class="text-end">Total</th>
               <th></th>
             </tr>
           </thead>
           <tbody id="inv-tbody">
-            <tr><td colspan="7" class="text-center text-muted py-4">Loading…</td></tr>
+            <tr><td colspan="9" class="text-center text-muted py-4">Loading…</td></tr>
           </tbody>
         </table>
       </div>
@@ -91,11 +93,20 @@
 
     function row(inv) {
       const voided = inv.void ? ' <span class="badge bg-secondary">VOID</span>' : '';
+      const dateOut = inv.return_date
+        ? formatDateShort(inv.return_date) + (inv.return_time ? ' <span class="text-muted small">' + inv.return_time + '</span>' : '')
+        : '<span class="text-muted small">TBC</span>';
+      const payDates = [inv.payment_date_1, inv.payment_date_2]
+        .filter(Boolean)
+        .map(d => formatDateShort(d))
+        .join(' / ') || '<span class="text-muted small">—</span>';
       return `<tr class="${inv.void ? 'opacity-50' : ''}">
         <td class="fw-bold">#${inv.invoice_number}</td>
         <td>${(inv.first_name || '') + ' ' + (inv.last_name || '')}</td>
         <td>${inv.rego || '—'}</td>
         <td class="small">${inv.date_in ? formatDateShort(inv.date_in) : '—'}</td>
+        <td class="small">${dateOut}</td>
+        <td class="small">${payDates}</td>
         <td>${statusBadge(inv.paid_status)}${voided}</td>
         <td class="text-end fw-bold">${formatCurrency(inv.total_price)}</td>
         <td><a class="btn btn-sm btn-outline-primary" href="/invoice.html?id=${inv.id}">Edit</a></td>
@@ -119,7 +130,7 @@
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         showAlert(err.error || 'Could not load invoices', 'danger');
-        document.getElementById('inv-tbody').innerHTML = '<tr><td colspan="7" class="text-center text-danger">Failed to load</td></tr>';
+        document.getElementById('inv-tbody').innerHTML = '<tr><td colspan="9" class="text-center text-danger">Failed to load</td></tr>';
         return;
       }
       const rows = await res.json();
@@ -129,7 +140,7 @@
         offset = 0;
       }
       if (!rows.length) {
-        if (!append) tb.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No invoices match</td></tr>';
+        if (!append) tb.innerHTML = '<tr><td colspan="9" class="text-center text-muted">No invoices match</td></tr>';
         document.getElementById('inv-load-more').classList.add('d-none');
         return;
       }
