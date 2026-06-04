@@ -60,6 +60,7 @@
               <tr><td>Cash</td><td class="fw-bold text-primary text-end" id="ed-cash">$0</td></tr>
               <tr><td><i class="bi bi-bank me-1"></i>Internet Banking</td><td class="fw-bold text-end" style="color:#6f42c1;" id="ed-internet">$0</td></tr>
               <tr><td>On Account</td><td class="fw-bold text-danger text-end" id="ed-account">$0</td></tr>
+              <tr><td><i class="bi bi-calendar-week me-1"></i>Long-term (inc GST)</td><td class="fw-bold text-end" style="color:#0d6efd;" id="ed-longterm">$0</td></tr>
               <tr class="table-light"><td><small class="text-muted">Total banked</small></td><td class="text-muted text-end small" id="ed-total-inline">$0</td></tr>
             </tbody>
           </table>
@@ -131,10 +132,10 @@
       <div class="table-responsive">
         <table class="table table-sm table-hover">
           <thead>
-            <tr><th>Date</th><th>Revenue</th><th>Cars In</th><th>Cars Yard</th><th>Eftpos</th><th>Cash</th><th>IB</th><th>Account</th><th>Notes</th></tr>
+            <tr><th>Date</th><th>Revenue</th><th>Cars In</th><th>Cars Yard</th><th>Eftpos</th><th>Cash</th><th>IB</th><th>LT</th><th>Account</th><th>Notes</th></tr>
           </thead>
           <tbody id="ed-history-tbody">
-            <tr><td colspan="9" class="text-center text-muted"><div class="spinner-border spinner-border-sm"></div></td></tr>
+            <tr><td colspan="10" class="text-center text-muted"><div class="spinner-border spinner-border-sm"></div></td></tr>
           </tbody>
         </table>
       </div>
@@ -167,6 +168,7 @@
       document.getElementById('ed-eftpos').textContent = formatCurrency(s.eftpos);
       document.getElementById('ed-cash').textContent = formatCurrency(s.cash);
       document.getElementById('ed-internet').textContent = formatCurrency(s.internet_banking || 0);
+      document.getElementById('ed-longterm').textContent = formatCurrency(s.longterm || 0);
       document.getElementById('ed-account').textContent = formatCurrency(s.on_account);
       document.getElementById('ed-total-inline').textContent = formatCurrency(s.total_revenue);
       document.getElementById('ed-cars-in').textContent = s.cars_in || 0;
@@ -263,10 +265,11 @@
           <td>${formatCurrency(r.eftpos_total)}</td>
           <td>${formatCurrency(r.cash_total)}</td>
           <td>${formatCurrency(r.internet_banking_total || 0)}</td>
+          <td>${formatCurrency(r.longterm_total || 0)}</td>
           <td>${formatCurrency(r.account_total)}</td>
           <td class="small text-muted">${r.notes||''}</td>
         </tr>
-      `).join('') || '<tr><td colspan="9" class="text-center text-muted">No history yet</td></tr>';
+      `).join('') || '<tr><td colspan="10" class="text-center text-muted">No history yet</td></tr>';
     }
 
     document.getElementById('btn-load-endday').addEventListener('click', loadEndDay);

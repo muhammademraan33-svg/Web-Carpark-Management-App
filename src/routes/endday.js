@@ -11,6 +11,22 @@ async function ensureEndDayInternetColumn() {
   } catch (_) {
     // Column already exists (or migration already applied).
   }
+  try {
+    await db.prepare(`ALTER TABLE end_day ADD COLUMN longterm_total REAL DEFAULT 0`).run();
+  } catch (_) {
+    // Column already exists (or migration already applied).
+  }
+}
+
+// Long-term payments are stored ex GST; banking/revenue elsewhere show inc GST (× 1.15),
+// so End of Day matches that convention.
+const LT_DAY = `substr(trim(COALESCE(payment_date,'')), 1, 10)`;
+async function longtermTotalIncGstForDay(carparkId, ymd) {
+  const row = await db.prepare(
+    `SELECT COALESCE(SUM(amount_ex_gst * 1.15), 0) AS total
+     FROM longterm_payments WHERE carpark_id = ? AND ${LT_DAY} = ?`
+  ).get(carparkId, ymd);
+  return Math.round((row?.total || 0) * 100) / 100;
 }
 
 router.get('/', requireAuth, async (req, res) => {
@@ -202,9 +218,19 @@ router.get('/', requireAuth, async (req, res) => {
       return (a.sort || '') < (b.sort || '') ? -1 : 1;
     });
 
+    // Long-term payments (inc GST) made on this date must show in End of Day banking too.
+    const longterm = await longtermTotalIncGstForDay(carparkId, today);
+    const mergedStats = {
+      ...stats,
+      cars_in_yard: carsInYard.count || 0,
+      longterm,
+      // "Total banked (all methods)" should include long-term receipts.
+      total_revenue: Math.round(((stats.total_revenue || 0) + longterm) * 100) / 100
+    };
+
     res.json({
       date: today,
-      stats: { ...stats, cars_in_yard: carsInYard.count || 0 },
+      stats: mergedStats,
       invoices,
       returningToday,
       record,
@@ -245,15 +271,18 @@ router.post('/', requireAuth, async (req, res) => {
       FROM invoices WHERE carpark_id = ? AND void = 0
     `).get(today, today, today, today, today, today, today, today, today, today, today, carparkId);
     const carsInYard = await db.prepare(`SELECT COUNT(*) as count FROM invoices WHERE carpark_id = ? AND void = 0 AND picked_up = 'Car In Yard'`).get(carparkId);
+    // Long-term payments (inc GST) on this date are part of the day's banking.
+    const longterm = await longtermTotalIncGstForDay(carparkId, today);
+    const totalBanked = Math.round(((stats.total_revenue || 0) + longterm) * 100) / 100;
     const existing = await db.prepare('SELECT id FROM end_day WHERE carpark_id = ? AND date = ?').get(carparkId, today);
     if (existing) {
-      await db.prepare(`UPDATE end_day SET total_revenue=?, cars_in=?, cars_in_yard=?, eftpos_total=?, cash_total=?, account_total=?, internet_banking_total=?, notes=?, staff_id=? WHERE id=?`)
-        .run(stats.total_revenue, stats.cars_in, carsInYard.count || 0, stats.eftpos, stats.cash, stats.on_account, stats.internet_banking, notes, req.session.userId, existing.id);
+      await db.prepare(`UPDATE end_day SET total_revenue=?, cars_in=?, cars_in_yard=?, eftpos_total=?, cash_total=?, account_total=?, internet_banking_total=?, longterm_total=?, notes=?, staff_id=? WHERE id=?`)
+        .run(totalBanked, stats.cars_in, carsInYard.count || 0, stats.eftpos, stats.cash, stats.on_account, stats.internet_banking, longterm, notes, req.session.userId, existing.id);
     } else {
-      await db.prepare(`INSERT INTO end_day (carpark_id, date, total_revenue, cars_in, cars_in_yard, eftpos_total, cash_total, account_total, internet_banking_total, notes, staff_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(carparkId, today, stats.total_revenue, stats.cars_in, carsInYard.count || 0, stats.eftpos, stats.cash, stats.on_account, stats.internet_banking, notes, req.session.userId);
+      await db.prepare(`INSERT INTO end_day (carpark_id, date, total_revenue, cars_in, cars_in_yard, eftpos_total, cash_total, account_total, internet_banking_total, longterm_total, notes, staff_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(carparkId, today, totalBanked, stats.cars_in, carsInYard.count || 0, stats.eftpos, stats.cash, stats.on_account, stats.internet_banking, longterm, notes, req.session.userId);
     }
-    res.json({ success: true, stats });
+    res.json({ success: true, stats: { ...stats, longterm, total_revenue: totalBanked } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

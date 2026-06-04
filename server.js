@@ -269,14 +269,22 @@ async function runMonthEndEmailJob({ force = false, includeAccounts = true, incl
 }
 
 // ─── Scheduled job: send month-end account/LT emails at 8 AM ──────────────────
-// Runs on days 28-31, but only executes on the last calendar day of the month.
-cron.schedule('0 8 28-31 * *', async () => {
-  try {
-    await runMonthEndEmailJob({ force: false });
-  } catch (_) {
-    // already logged in runMonthEndEmailJob
-  }
-});
+// DISABLED by default at the client's request: account + long-term emails must be
+// sent MANUALLY (per-customer buttons, or the admin "run month-end emails" action).
+// To re-enable the automatic month-end run, set ENABLE_MONTHLY_EMAIL_CRON=true.
+if (process.env.ENABLE_MONTHLY_EMAIL_CRON === 'true') {
+  // Runs on days 28-31, but only executes on the last calendar day of the month.
+  cron.schedule('0 8 28-31 * *', async () => {
+    try {
+      await runMonthEndEmailJob({ force: false });
+    } catch (_) {
+      // already logged in runMonthEndEmailJob
+    }
+  });
+  console.log('[Email] Automatic month-end email cron ENABLED (ENABLE_MONTHLY_EMAIL_CRON=true).');
+} else {
+  console.log('[Email] Automatic month-end emails are OFF. Send manually from the app (admin action / per-customer buttons).');
+}
 
 // ─── Admin: manually trigger month-end email run now ───────────────────────────
 app.post('/api/admin/run-month-end-emails', async (req, res) => {
