@@ -19,7 +19,7 @@
 
     <div class="alert alert-secondary small mb-3">
       Company accounts are matched on the <strong>Invoice</strong> page automatically by your existing customer/account links.
-      <strong>Total balance</strong> is all-time invoiced minus all payments recorded here.
+      <strong>Total balance</strong> is all-time invoiced minus payments recorded here. When adding a payment, allocate it to a specific invoice so each month’s outstanding is accurate.
     </div>
 
     <div class="table-container">
@@ -82,6 +82,13 @@
         <div class="border-top pt-3 mt-3">
           <div class="form-section-title"><i class="bi bi-cash-coin me-2"></i>Payments (paid vs outstanding)</div>
           <div class="row g-2 mb-2">
+            <div class="col-md-6">
+              <label class="form-label">Allocate to invoice *</label>
+              <select class="form-select form-select-sm" id="acct-pay-invoice">
+                <option value="">— Select invoice —</option>
+              </select>
+              <div class="form-text small" id="acct-pay-invoice-hint">Shows invoices with an outstanding balance.</div>
+            </div>
             <div class="col-md-3">
               <label class="form-label">Amount</label>
               <input type="number" step="0.01" class="form-control form-control-sm" id="acct-pay-amount" placeholder="e.g. 230.00">
@@ -89,7 +96,7 @@
             <div class="col-md-3">
               <label class="form-label">Payment date</label>
               <input type="date" class="form-control form-control-sm" id="acct-pay-date">
-              <div class="form-text small">Defaults to the month you’re viewing.</div>
+              <div class="form-text small">When the payment was received.</div>
             </div>
             <div class="col-md-3">
               <label class="form-label">Method</label>
@@ -113,10 +120,10 @@
           <div class="table-responsive">
             <table class="table table-sm table-bordered mb-0">
               <thead class="table-light">
-                <tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th class="text-end"></th></tr>
+                <tr><th>Date</th><th>Invoice</th><th>Amount</th><th>Method</th><th>Reference</th><th class="text-end"></th></tr>
               </thead>
               <tbody id="acct-payments-tbody">
-                <tr><td colspan="5" class="text-center text-muted small">No payments recorded for this period.</td></tr>
+                <tr><td colspan="6" class="text-center text-muted small">No payments recorded for this period.</td></tr>
               </tbody>
             </table>
           </div>
@@ -187,6 +194,7 @@
     document.getElementById('navbar-container').innerHTML = renderNavbar('accounts');
 
     let currentAccountId = null;
+    let outstandingInvoices = [];
 
     // Set current month
     document.getElementById('detail-month').value = new Date().getMonth() + 1;
@@ -284,6 +292,49 @@
       el.value = t0 < t1 ? monthEndStr : monthStartStr;
     }
 
+    function invoicePayStatusBadge(status) {
+      const map = {
+        Paid: 'badge bg-success',
+        Partial: 'badge bg-warning text-dark',
+        Outstanding: 'badge bg-danger',
+      };
+      return `<span class="${map[status] || 'badge bg-secondary'}">${status || '—'}</span>`;
+    }
+
+    function renderInvoicePayOptions(invoices, preferMonthInvoices) {
+      const sel = document.getElementById('acct-pay-invoice');
+      const prev = sel.value;
+      if (!invoices.length) {
+        sel.innerHTML = '<option value="">— No outstanding invoices —</option>';
+        return;
+      }
+      const monthIds = new Set((preferMonthInvoices || []).map((i) => String(i.id)));
+      const inMonth = invoices.filter((i) => monthIds.has(String(i.id)));
+      const other = invoices.filter((i) => !monthIds.has(String(i.id)));
+      const opt = (i) => {
+        const label = `#${i.invoice_number} · ${formatDateShort(i.date_in)} · ${i.rego || '—'} · owing ${formatCurrency(i.amount_outstanding)}`;
+        return `<option value="${i.id}" data-outstanding="${i.amount_outstanding}">${label}</option>`;
+      };
+      let html = '<option value="">— Select invoice —</option>';
+      if (inMonth.length) {
+        html += `<optgroup label="This statement month">${inMonth.map(opt).join('')}</optgroup>`;
+      }
+      if (other.length) {
+        html += `<optgroup label="Other outstanding">${other.map(opt).join('')}</optgroup>`;
+      }
+      sel.innerHTML = html;
+      if (prev && invoices.some((i) => String(i.id) === prev)) sel.value = prev;
+    }
+
+    async function loadOutstandingInvoices(preferMonthInvoices) {
+      if (!currentAccountId) return;
+      const res = await fetch(`/api/accounts/${currentAccountId}/outstanding-invoices`);
+      if (!res.ok) return;
+      const data = await res.json();
+      outstandingInvoices = data.invoices || [];
+      renderInvoicePayOptions(outstandingInvoices, preferMonthInvoices);
+    }
+
     async function loadStatement() {
       if (!currentAccountId) return;
       const month = document.getElementById('detail-month').value;
@@ -300,16 +351,18 @@
         <div class="table-responsive">
           <table class="table table-sm table-bordered">
             <thead class="table-light">
-              <tr><th>Stay</th><th>Name</th><th>Car Rego</th><th>Cost</th><th>Status</th><th>Invoice #</th></tr>
+              <tr><th>Stay</th><th>Name</th><th>Rego</th><th>Invoiced</th><th>Paid</th><th>Outstanding</th><th>Status</th><th>Invoice #</th></tr>
             </thead>
             <tbody>
               ${data.invoices.map(inv => `
-                <tr>
+                <tr class="${inv.amount_outstanding > 0.01 ? 'table-warning' : ''}">
                   <td class="small">${formatDateShort(inv.date_in)} - ${formatDateShort(inv.return_date)}</td>
                   <td>${inv.first_name||''} ${inv.last_name||''}</td>
                   <td class="fw-bold">${inv.rego||''}</td>
-                  <td class="text-success fw-bold">${formatCurrency(inv.total_price || 0)}</td>
-                  <td>${statusBadge(inv.paid_status)}</td>
+                  <td class="fw-bold">${formatCurrency(inv.total_price || 0)}</td>
+                  <td class="text-success">${formatCurrency(inv.amount_paid || 0)}</td>
+                  <td class="fw-bold ${inv.amount_outstanding > 0.01 ? 'text-danger' : 'text-muted'}">${formatCurrency(inv.amount_outstanding || 0)}</td>
+                  <td>${invoicePayStatusBadge(inv.payment_status)}</td>
                   <td><a href="/invoice.html?id=${inv.id}">#${inv.invoice_number}</a></td>
                 </tr>
               `).join('')}
@@ -317,7 +370,9 @@
             <tfoot>
               <tr class="table-success">
                 <td colspan="3" class="fw-bold">Total for ${monthName(month)} ${year}:</td>
-                <td class="fw-bold text-success fs-6">${formatCurrency(data.total)}</td>
+                <td class="fw-bold">${formatCurrency(data.total)}</td>
+                <td class="fw-bold text-success">${formatCurrency(data.paid)}</td>
+                <td class="fw-bold text-danger">${formatCurrency(data.outstanding)}</td>
                 <td colspan="2"></td>
               </tr>
             </tfoot>
@@ -329,6 +384,8 @@
       `;
       }
 
+      await loadOutstandingInvoices(data.invoices);
+
       // Payments summary for the same month/year period
       const paid = Number(data.paid || 0);
       const outstanding = Number(data.outstanding || 0);
@@ -338,18 +395,23 @@
       const pt = document.getElementById('acct-payments-tbody');
       const payments = data.payments || [];
       pt.innerHTML = payments.length
-        ? payments.map(p => `
+        ? payments.map(p => {
+          const invLabel = p.invoice_id && p.invoice_number
+            ? `<a href="/invoice.html?id=${p.invoice_id}">#${p.invoice_number}</a>`
+            : '<span class="text-muted">Unallocated</span>';
+          return `
           <tr>
             <td class="small">${p.payment_date || ''}</td>
+            <td class="small">${invLabel}</td>
             <td class="fw-bold text-success">${formatCurrency(p.amount || 0)}</td>
             <td class="small">${p.payment_method || ''}</td>
             <td class="small">${p.transaction_reference || ''}</td>
             <td class="text-end">
               <button type="button" class="btn btn-sm btn-outline-danger btn-delete-acct-payment" data-id="${p.id}" title="Delete payment"><i class="bi bi-trash"></i></button>
             </td>
-          </tr>
-        `).join('')
-        : '<tr><td colspan="5" class="text-center text-muted small">No payments recorded for this period.</td></tr>';
+          </tr>`;
+        }).join('')
+        : '<tr><td colspan="6" class="text-center text-muted small">No payments allocated to this month’s invoices yet.</td></tr>';
 
       pt.querySelectorAll('.btn-delete-acct-payment').forEach((btn) => {
         btn.addEventListener('click', async () => {
@@ -369,24 +431,37 @@
 
     document.getElementById('btn-load-statement').addEventListener('click', loadStatement);
 
+    document.getElementById('acct-pay-invoice').addEventListener('change', () => {
+      const sel = document.getElementById('acct-pay-invoice');
+      const opt = sel.options[sel.selectedIndex];
+      const out = parseFloat(opt?.dataset?.outstanding || '');
+      const amtEl = document.getElementById('acct-pay-amount');
+      if (Number.isFinite(out) && out > 0 && !amtEl.value) {
+        amtEl.value = out.toFixed(2);
+      }
+    });
+
     document.getElementById('btn-add-acct-payment').addEventListener('click', async () => {
       if (!currentAccountId) return;
+      const invoice_id = document.getElementById('acct-pay-invoice').value;
       const amount = parseFloat(document.getElementById('acct-pay-amount').value);
       const payment_date = document.getElementById('acct-pay-date').value;
       const payment_method = document.getElementById('acct-pay-method').value;
       const transaction_reference = document.getElementById('acct-pay-ref').value;
+      if (!invoice_id) { showAlert('Select which invoice this payment is for', 'danger'); return; }
       if (!Number.isFinite(amount) || amount <= 0) { showAlert('Enter a valid payment amount', 'danger'); return; }
       if (!payment_date) { showAlert('Select a payment date', 'danger'); return; }
       const res = await fetch(`/api/accounts/${currentAccountId}/payments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payment_date, amount, payment_method, transaction_reference })
+        body: JSON.stringify({ payment_date, amount, payment_method, transaction_reference, invoice_id })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { showAlert(data.error || 'Failed to add payment', 'danger'); return; }
-      showAlert('Payment recorded', 'success');
+      showAlert('Payment allocated to invoice', 'success');
       document.getElementById('acct-pay-amount').value = '';
       document.getElementById('acct-pay-ref').value = '';
+      document.getElementById('acct-pay-invoice').value = '';
       await loadStatement();
       await loadAccounts();
     });

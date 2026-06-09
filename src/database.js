@@ -266,6 +266,7 @@ async function initializeDatabase() {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     carpark_id INTEGER DEFAULT 1,
     account_customer_id INTEGER NOT NULL,
+    invoice_id INTEGER,
     payment_date DATE NOT NULL,
     amount REAL NOT NULL,
     payment_method TEXT,
@@ -273,7 +274,9 @@ async function initializeDatabase() {
     notes TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  try { x(`ALTER TABLE account_payments ADD COLUMN invoice_id INTEGER`); } catch (_) {}
   try { x(`CREATE INDEX IF NOT EXISTS account_payments_by_account ON account_payments (carpark_id, account_customer_id, payment_date DESC)`); } catch (_) {}
+  try { x(`CREATE INDEX IF NOT EXISTS account_payments_by_invoice ON account_payments (invoice_id)`); } catch (_) {}
 
   ['rego_1', 'rego_2'].forEach((col) => {
     try { x(`ALTER TABLE account_customers ADD COLUMN ${col} TEXT`); } catch (_) {}
